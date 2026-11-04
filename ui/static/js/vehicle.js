@@ -49,17 +49,85 @@
 
       el('rect', { x: 0, y: 0, width: W, height: TOP_H, rx: 14, class: 'stage-bg' }, s);
       this.top = el('g', { 'clip-path': 'url(#tt-clip-top)' }, s);
-      this.grid = el('g', { class: 'stage-grid' }, this.top);
-      this.ghostPath = el('path', { class: 'trail ghost' }, this.top);
-      this.trailPath = el('path', { class: 'trail' }, this.top);
-      this.car = el('g', { class: 'car' }, this.top);
+      // camera: cam = user zoom / pan; world = follow-car (identity) or world-anchored transform
+      this.cam = el('g', {}, this.top);
+      this.world = el('g', {}, this.cam);
+      this.grid = el('g', { class: 'stage-grid' }, this.world);
+      this.ghostPath = el('path', { class: 'trail ghost' }, this.world);
+      this.trailPath = el('path', { class: 'trail' }, this.world);
+      this.car = el('g', { class: 'car' }, this.world);
       this.hud = el('g', { class: 'hud' }, s);
+      this.zoom = 1; this.panX = 0; this.panY = 0; this.follow = true;
+      this.bindCamera();
 
       el('rect', { x: 0, y: SIDE_Y, width: W, height: SIDE_H, rx: 14, class: 'stage-bg' }, s);
       this.side = el('g', {}, s);
       el('text', { x: 18, y: 26, class: 'stage-label' }, s).textContent = 'TOP';
       el('text', { x: 18, y: SIDE_Y + 24, class: 'stage-label' }, s).textContent = 'SIDE';
     }
+
+    // ---- camera: wheel zoom about the pointer, drag to pan, double-click to reset ----------------------------
+    bindCamera() {
+      const s = this.svg;
+      const toView = e => { const r = s.getBoundingClientRect(), k = W / r.width; return [(e.clientX - r.left) * k, (e.clientY - r.top) * k]; };
+      s.addEventListener('wheel', e => {
+        const [mx, my] = toView(e);
+        if (my > TOP_H) return;
+        e.preventDefault();
+        this.zoomAt(mx, my, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+      }, { passive: false });
+      let drag = null;
+      s.addEventListener('pointerdown', e => {
+        const [mx, my] = toView(e);
+        if (my > TOP_H || e.button !== 0) return;
+        drag = { x: mx, y: my, px: this.panX, py: this.panY };
+        s.setPointerCapture(e.pointerId);
+        s.classList.add('dragging');
+      });
+      s.addEventListener('pointermove', e => {
+        if (!drag) return;
+        const [mx, my] = toView(e);
+        this.panX = drag.px + mx - drag.x; this.panY = drag.py + my - drag.y;
+        this.applyCam();
+      });
+      const end = () => { drag = null; s.classList.remove('dragging'); };
+      s.addEventListener('pointerup', end);
+      s.addEventListener('pointercancel', end);
+      s.addEventListener('dblclick', e => { if (toView(e)[1] <= TOP_H) this.resetView(); });
+    }
+
+    applyCam() {
+      this.cam.setAttribute('transform', `translate(${W / 2 + this.panX} ${TOP_H / 2 + this.panY}) scale(${this.zoom}) translate(${-W / 2} ${-TOP_H / 2})`);
+      if (!this.playing) this.draw(this.frameAt(this.t));
+      if (this.onCamera) this.onCamera(this);
+    }
+
+    // zoom by factor f keeping the view point (mx, my) where it is
+    zoomAt(mx, my, f) {
+      const z = clamp(this.zoom * f, 0.015, 6);
+      const px = W / 2 + (mx - W / 2 - this.panX) / this.zoom, py = TOP_H / 2 + (my - TOP_H / 2 - this.panY) / this.zoom;
+      this.zoom = z;
+      this.panX = mx - W / 2 - z * (px - W / 2); this.panY = my - TOP_H / 2 - z * (py - TOP_H / 2);
+      this.applyCam();
+    }
+    zoomBy(f) { this.zoomAt(W / 2, TOP_H / 2, f); }
+    resetView() { this.zoom = 1; this.panX = 0; this.panY = 0; this.applyCam(); }
+    setFollow(on) { this.follow = on; this.resetView(); if (!on) this.fit(); }
+
+    // world view: frame the whole scenario path (and the original's) in the top view
+    fit() {
+      if (this.follow || !this.frames.length || !this.carDef) { this.resetView(); return; }
+      const pts = [...this.frames, ...this.ghost].map(f => this.worldToScreen(f.x || 0, f.y || 0));
+      const m = (this.front - this.rear) * this.scale * 0.6;
+      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+      const x0 = Math.min(...xs) - m, x1 = Math.max(...xs) + m, y0 = Math.min(...ys) - m, y1 = Math.max(...ys) + m;
+      this.zoom = clamp(Math.min(W * 0.92 / (x1 - x0), TOP_H * 0.86 / (y1 - y0)), 0.015, 3);
+      this.panX = -this.zoom * ((x0 + x1) / 2 - W / 2); this.panY = -this.zoom * ((y0 + y1) / 2 - TOP_H / 2);
+      this.applyCam();
+    }
+
+    // world mode: the scenario's world origin sits at the view centre, the car drives across it
+    worldToScreen(x, y) { return [this.cx + (x - this.anchor[0]) * this.scale, this.cy - (y - this.anchor[1]) * this.scale]; }
 
     // car: TireTuneSim car; frames: scenario frames; ghost: frames of the original setup (corner only)
     setScene(car, frames, ghost, kind) {
@@ -69,7 +137,11 @@
       const keepPhase = !first ? this.t / this.duration() : (this.playing ? 0 : (kind === 'corner' ? 0.92 : 0.45));
       this.carDef = car; this.frames = frames || []; this.ghost = ghost || []; this.kind = kind;
       this.t = clamp(keepPhase, 0, 1) * this.duration();
+      // world-mode anchor: middle of the path's extent
+      const xs = this.frames.map(f => f.x || 0), ys = this.frames.map(f => f.y || 0);
+      this.anchor = xs.length ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : [0, 0];
       this.layoutCar();
+      if (first && !this.follow) this.fit();
       if (!this.playing) this.draw(this.frameAt(this.t));
     }
 
@@ -178,8 +250,13 @@
       const c = this.carDef;
       if (!c || !fr) return;
       const s = this.scale;
-      // world grid scrolls under the car
+      // world grid scrolls under the car (follow); in world mode the whole car-frame drawing is moved onto the path
       const psi = fr.psi || 0, px = fr.x || 0, py = fr.y || 0;
+      if (this.follow) this.world.removeAttribute('transform');
+      else {
+        const [sx, sy] = this.worldToScreen(px, py);
+        this.world.setAttribute('transform', `translate(${sx} ${sy}) rotate(${-psi * 180 / Math.PI}) translate(${-this.cx} ${-this.cy})`);
+      }
       this.drawGrid(px, py, psi);
       if (this.kind === 'corner') {
         this.trailPath.setAttribute('d', this.pathFor(this.frames, fr, px, py, psi));
@@ -221,12 +298,14 @@
     }
 
     drawGrid(px, py, psi) {
-      const g = this.grid, s = this.scale, step = 2;
+      const g = this.grid;
+      // grid spacing grows when zoomed out so the ground always covers the view (2 m, 10 m or 50 m)
+      const step = this.zoom < 0.2 ? 50 : this.zoom < 0.55 ? 10 : 2;
       if (!this.gridLines) {
         this.gridLines = [];
         for (let i = 0; i < 60; i++) this.gridLines.push(el('line', { class: i % 5 ? 'gl' : 'gl major' }, g));
       }
-      const span = 30, cos = Math.cos(-psi), sin = Math.sin(-psi);
+      const span = step * 15, cos = Math.cos(-psi), sin = Math.sin(-psi);
       const ox = Math.floor(px / step) * step, oy = Math.floor(py / step) * step;
       let n = 0;
       const toCar = (wx, wy) => { const dx = wx - px, dy = wy - py; return this.toScreen(dx * cos - dy * sin, dx * sin + dy * cos); };

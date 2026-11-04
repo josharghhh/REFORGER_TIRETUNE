@@ -26,12 +26,18 @@
         radius: num(wheel.Radius, g.y || 0.35),
         steerMax: num(susp.MaxSteeringAngle, 0),
         torqueShare: num(a.TorqueShare, 0),
-        brakeTorque: num(wheel.BrakeTorque, 1500),
+        brakeTorque: num(wheel.BrakeTorque, 1500), abs: num(wheel.ABS_Slip_Threshold, 1),
         spring: num(susp.SpringRate, 40) * 1000,            // N/m (SpringRate read as N/mm)
-        damper: num(susp.CompressionDamper, 2000),
+        damper: num(susp.CompressionDamper, 2000), rebound: num(susp.RelaxationDamper, num(susp.CompressionDamper, 2000)),
         travelUp: num(susp.MaxTravelUp, 0.12), travelDown: num(susp.MaxTravelDown, 0.12),
         sway: a.Swaybar ? num(a.Swaybar.Stiffness, 0) : 0,
         coeff,
+        align: (() => {
+          const AL = globalThis.TireTuneAlign, al = a.align || {};
+          if (!AL) return null;
+          const w = AL.decodeWheel(Object.values(al.wheels || {})[0]), k = AL.decodeKingpin(Object.values(al.kingpins || {})[0]);
+          return { camber: w.camber || 0, toe: w.toe || 0, caster: k.caster || 0, sai: k.sai || 0, hasKingpin: k.family !== 'none' };
+        })(),
       };
     });
     const zs = axles.map(a => a.z);
@@ -144,9 +150,10 @@
       const axles = car.axles.map((a, k) => {
         const per = loads[k].map(Fz => {
           const peak = peakLongitudinal(a, Fz), want = a.brakeTorque / a.radius;
-          const locked = want > peak;
-          const f = locked ? Math.abs(P.forces(a.coeff, Fz, -1, 0, 0).Fx) : want;
-          return { f, peak, locked, use: Math.min(1, want / peak) };
+          const abs = a.abs < 1 && want > peak;          // ABS holds the wheel just under the peak instead of locking
+          const locked = want > peak && !abs;
+          const f = locked ? Math.abs(P.forces(a.coeff, Fz, -1, 0, 0).Fx) : abs ? peak * 0.96 : want;
+          return { f, peak, locked, abs, use: Math.min(1, want / peak) };
         });
         Fx += per[0].f + per[1].f;
         return { loads: loads[k], wheels: per, use: [per[0].use, per[1].use], locked: per.some(p => p.locked) };

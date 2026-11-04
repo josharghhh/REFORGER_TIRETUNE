@@ -24,6 +24,8 @@ stable 1.8 Tools have no Pacejka2002 tyre model (vehicles there use the older Pa
 
 ## Use
 
+0. Open **your mod's** project in Workbench with TireTune_Workbench loaded alongside it (add it as a dependency, or
+   add your mod to TireTune's `addon.gproj`). TireTune can only write to addons Workbench has loaded.
 1. In the Resource Browser select your vehicle `.et`, then **Plugins > TireTune > Open selected vehicle**
    (or right-click the `.et` > TireTune). The UI opens in its own window.
    Vanilla vehicles are read only: right-click the stock prefab > *Create Inherited Prefab* into your addon and tune
@@ -34,8 +36,31 @@ stable 1.8 Tools have no Pacejka2002 tyre model (vehicles there use the older Pa
    where it comes from (this prefab, a config, or the engine default).
 4. **Tyre model**: the key Pacejka coefficients with plain-language labels, every coefficient underneath, and stock
    presets (Car_80s, MilitaryVehicle_80s, Truck_80s, M151A2) to compare against or load.
-5. Watch the **Vehicle** view: Corner / Brake / Launch scenarios, colour = grip used, dashed line = your original
-   setup. **Tire Lab** opens the original tool with your vehicle loaded; its edits flow back.
+5. Watch the **Vehicle** view: Corner (left or right bend) / Brake / Launch, colour = grip used, dashed line = your
+   original setup. Scroll to zoom, drag to move, **World** to watch the car drive the whole line, **Fit** to frame it.
+   **3D Car**: orbit / zoom your vehicle, hover a part for its numbers, click it to adjust it with its graph.
+   **Suspension corner** (top of the Tyre Studio): one wheel corner in 3D, built from the setup. Drag the white dot
+   through bump and droop, the red / amber markers for the travel limits, the spring top for stiffness, the tie rod
+   to steer, the tyre top / front for camber / toe and the green axis top for caster / SAI (angles drawn x3).
+   Live readouts: travel, spring force, steer, camber while steering, tyre squash, grip at a test slip angle. Click
+   any part to edit it beside the rig; pick the axle above it.
+   The tyre squashes with the live wheel load (flat spot, sidewall bulge, longer contact patch) with pressure and
+   exaggeration sliders. That part is a **preview**: Reforger has no tyre pressure or vertical stiffness field.
+   **Tyre size** (e.g. 205/55R16) shows the real radius, width and sidewall, shapes the rig's tyre, and can set the
+   tyre model's NominalRadius or the axle's wheel Radius from it (those do write, through Review).
+   **Tyre Studio** (full window): the tyre model as plain-word verdicts, big curves to grab, and every coefficient
+   as a named slider you can also click and type into (Enter applies, Esc cancels), grouped by what it shapes.
+   **Original Tire Lab** (button in the Studio) opens your friend's tool with the vehicle loaded; edits flow back.
+   **Alignment** (Axles tab): camber, toe, caster and SAI as drag-able front/top/side diagrams against BI's typical
+   ranges. Values are read in the convention the model already uses (stock 1.9 vehicles); cars without hub angles
+   (SampleCar-based, most custom cars) need the left wheel set once in Workbench first ("Show diag shapes").
+   **Graphs are the controls:** drag the dots. Tyre model: the cornering and drive/brake curves have a grip dot
+   (up/down = grip, left/right = where it peaks), a turn-in dot and a breakaway dot, and the tiles above say what that
+   means (Road / Sport / Race, sharp or soft turn-in, progressive or snappy). Axles: spring stiffness and bump stop,
+   compression and rebound damping, brake torque vs tyre grip, lateral friction, steering lock and ratio. The raw
+   numbers sit under "More numbers"; all Pacejka coefficients under "Expert".
+   **Templates** has eight one-click wild setups (Drift King, Ice Rink, Moon Buggy...). **Demo** plays a filmable
+   walkthrough (`?demo=1&speed=0.8&from=N` in the address bar; Space pause, Right arrow next, Esc stop).
 6. **Review & apply** shows the exact text diff per file. *Write files* backs up, writes, and asks Workbench to
    reimport (Net API) or queues it for **Plugins > TireTune > Reimport changes**. Reopen the world to drive the
    result: prefab changes need a world reopen, Reload Scripts is not enough.
@@ -51,9 +76,6 @@ place: every vehicle using it changes), otherwise a new config in your addon tha
 - The preview is an approximation (planar model, quasi-static load transfer, SpringRate read as N/mm, Tyre friction
   factors assumed to scale the Pacejka peak). Use it to compare setups; confirm in game.
 - Live telemetry (*Live* chip) streams wheel slips and compression from Play mode; it is experimental.
-
-Code walkthrough: open this folder in VS Code with the CodeTour extension (`vsls-contrib.codetour`); the tour in
-`.tours/tiretune.tour` starts by itself. Technical notes and the open Workbench checklist: `docs/HANDOFF.md`.
 
 Without Workbench, for a quick look at an unpacked vehicle:
 `python ui/serve.py --dev-dump <unpacked game data> --dev-addon <your addon> --prefab Prefabs/.../Car.et`

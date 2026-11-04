@@ -56,12 +56,24 @@
   <section class="center">
     <nav class="tabs center-tabs" role="tablist" id="view-tabs">
       <button role="tab" data-view="vehicle" aria-selected="true">Vehicle</button>
-      <button role="tab" data-view="tirelab" aria-selected="false">Tire Lab</button>
+      <button role="tab" data-view="3d" aria-selected="false">3D Car</button>
+      <button role="tab" data-view="tirelab" aria-selected="false">Tyre Studio</button>
     </nav>
     <div id="view-vehicle" class="view">
       <div class="panel stage-wrap">
         <svg id="stage" class="stage" role="img" aria-label="Animated vehicle: top view with tyre forces, side view with suspension"></svg>
         <div class="stage-hud" id="stage-hud" aria-live="polite"></div>
+        <div class="stage-tools" role="toolbar" aria-label="View">
+          <div class="seg seg-sm" role="radiogroup" aria-label="Camera">
+            <button role="radio" data-cam="follow" aria-checked="true" title="Camera follows the car">Follow</button>
+            <button role="radio" data-cam="world" aria-checked="false" title="Fixed ground: watch the car drive the whole line">World</button>
+          </div>
+          <button class="icon-btn sm" type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+          <button class="icon-btn sm" type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button class="btn ghost sm" type="button" id="zoom-fit" title="Fit the whole path (World) or reset (Follow). Double-click the view also resets.">Fit</button>
+          <span class="zoom-read" id="zoom-read">100%</span>
+        </div>
+        <div class="stage-hint">Scroll to zoom &middot; drag to move &middot; double-click to reset</div>
         <div class="legend">
           <span><i style="background:var(--use-0)"></i>low grip use</span>
           <span><i style="background:var(--use-1)"></i>near limit</span>
@@ -76,6 +88,10 @@
           <button role="radio" data-s="launch" aria-checked="false">Launch</button>
         </div>
         <label class="mini" id="lbl-speed">Speed <output id="out-speed">50 km/h</output><input id="in-speed" type="range" min="10" max="160" step="1" value="50"></label>
+        <div class="seg seg-sm" role="radiogroup" aria-label="Bend direction" id="bend-dir">
+          <button role="radio" data-d="1" aria-checked="true">Left</button>
+          <button role="radio" data-d="-1" aria-checked="false">Right</button>
+        </div>
         <label class="mini" id="lbl-radius">Bend radius <output id="out-radius">35 m</output><input id="in-radius" type="range" min="8" max="200" step="1" value="35"></label>
         <button id="btn-play" class="icon-btn" type="button" aria-label="Pause"><svg><use href="#i-pause"/></svg></button>
         <input id="in-scrub" class="scrub" type="range" min="0" max="1000" value="0" aria-label="Scenario time">
@@ -91,8 +107,28 @@
         </div>
       </div>
     </div>
+    <div id="view-3d" class="view" hidden>
+      <div id="car3d" class="panel car3d">
+        <div class="c3-tools" role="toolbar" aria-label="3D view">
+          <button class="btn ghost sm" type="button" id="c3-reset">Reset view</button>
+          <button class="btn ghost sm" type="button" id="c3-side">Side</button>
+          <button class="btn ghost sm" type="button" id="c3-front">Front</button>
+          <button class="btn ghost sm" type="button" id="c3-top">Top</button>
+          <button class="btn ghost sm toggle" type="button" id="c3-rotate" aria-pressed="false">Auto-rotate</button>
+          <button class="btn ghost sm toggle" type="button" id="c3-exag" aria-pressed="true" title="Suspension movement x3 so it reads on screen">Exaggerate x3</button>
+        </div>
+        <div class="c3-hint">Drag to orbit &middot; right-drag to pan &middot; scroll to zoom &middot; hover a part for its numbers, click it to adjust</div>
+        <div id="car3d-tip" class="c3-tip" hidden></div>
+        <aside id="inspector" class="inspector" hidden></aside>
+      </div>
+    </div>
     <div id="view-tirelab" class="view" hidden>
-      <iframe id="tirelab" title="Tire Lab" class="panel tirelab-frame"></iframe>
+      <div id="studio" class="studio"></div>
+      <div id="tirelab-wrap" class="tirelab-wrap" hidden>
+        <div class="studio-bar"><b>Original Tire Lab</b><span class="muted small">your friend's tool, loaded with this vehicle; its edits flow back</span>
+          <button class="btn ghost sm" type="button" id="tirelab-close">Back to Tyre Studio</button></div>
+        <iframe id="tirelab" title="Tire Lab" class="panel tirelab-frame"></iframe>
+      </div>
     </div>
   </section>
 
@@ -122,7 +158,7 @@
       </select>
     </div>
     <div id="review-files" class="review-files"></div>
-    <p class="muted small">Every changed file is backed up first (TireTune_Workbench/ui/state/backups). Changes to a prefab need the world reopened in Workbench; Reload Scripts is not enough.</p>
+    <p class="muted small">Every changed file is backed up first, outside your addons (%LOCALAPPDATA%\TireTune\backups). Changes to a prefab need the world reopened in Workbench; Reload Scripts is not enough.</p>
     <footer><button class="btn ghost" value="cancel">Cancel</button><button id="btn-apply" class="btn primary" value="default" type="button"><svg><use href="#i-apply"/></svg>Write files</button></footer>
   </form>
 </dialog>
@@ -132,7 +168,13 @@
 <script src="js/sim.js"></script>
 <script src="js/vehicle.js"></script>
 <script src="js/charts.js"></script>
+<script src="js/context.js"></script>
+<script src="js/tyrefeel.js"></script>
+<script src="js/align.js"></script>
 <script src="js/app.js"></script>
 <script src="js/demo.js"></script>
+<script type="importmap">{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }</script>
+<script type="module" src="js/car3d.js"></script>
+<script type="module" src="js/rig3d.js"></script>
 </body>
 </html>

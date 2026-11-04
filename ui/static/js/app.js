@@ -24,6 +24,8 @@
       ['Ratio', 'Ratio', '', 0.1, 10, 0.05, 'Wheel-end reduction ratio.'],
       ['BrakeTorque', 'Brake torque', 'N m', 0, 20000, 10, 'Per wheel. Above what the tyre holds, the wheel locks.'],
       ['HandbrakeTorqueFactor', 'Handbrake factor', '', 0, 5, 0.05, 'Handbrake torque scaling.'],
+      ['ABS_Slip_Threshold', 'ABS slip limit', '', 0, 1, 0.01, '1 = no ABS. Below 1, ABS steps in before the wheel locks.'],
+      ['ABS_Minimum_RPM', 'ABS minimum wheel speed', 'rpm', 0, 1000, 5, 'Below this wheel speed ABS lets the wheel lock.'],
     ],
     Tyre: [
       ['LateralFriction', 'Lateral friction', '', 0, 3, 0.005, 'Extra lateral grip factor outside Pacejka (preview: scales the peak).'],
@@ -59,7 +61,7 @@
 
   const st = {
     data: null, orig: null, cur: null, geo: null, axleSel: 0, scenario: 'corner', speed: 50, radius: 35,
-    preset: '', live: false, liveTimer: 0, tab: 'chassis', view: 'vehicle', stamp: -1, recalcTimer: 0,
+    preset: '', dir: 1, live: false, liveTimer: 0, tab: 'chassis', view: 'vehicle', stamp: -1, recalcTimer: 0,
   };
   globalThis.TireTuneState = st;       // for the browser console
   const stage = new TireTuneStage.Stage($('stage'));
@@ -84,6 +86,11 @@
       aero: { ReferenceArea: val(v.aero.ReferenceArea), DragCoefficient: val(v.aero.DragCoefficient) },
       axles: v.axles.map(a => {
         const ax = { TorqueShare: val(a.props.TorqueShare), HasHandbrake: val(a.props.HasHandbrake) };
+        if (pick === 'value') {
+          ax.align = { wheels: {}, kingpins: {} };
+          for (const w of a.wheels || []) if (Array.isArray(w.angles)) ax.align.wheels[w.name] = w.angles.slice();
+          for (const k of a.kingpins || []) if (Array.isArray(k.angles)) ax.align.kingpins[k.id] = k.angles.slice();
+        }
         for (const k of Object.keys(AXLE_DEFS)) {
           if (!a[k] || (k === 'Swaybar' && !a[k].present)) continue;
           ax[k] = {};
@@ -109,9 +116,12 @@
     st.stamp = d.stamp;
     st.data = d;
     if (d.error || !d.vehicle) {
-      $('breadcrumb').textContent = d.error || 'No vehicle: in Workbench select a vehicle prefab, then Plugins > TireTune > Open selected vehicle.';
+      $('breadcrumb').textContent = d.error ? d.error + ' (moved or deleted? Select it again in Workbench and use Plugins > TireTune > Open selected vehicle.)'
+        : 'No vehicle: in Workbench select a vehicle prefab, then Plugins > TireTune > Open selected vehicle.';
       return;
     }
+    st.addTyreModel = null;
+    try { st.tyreSizeText = localStorage.getItem('tt-size:' + d.vehicle.prefab) || ''; st.tyreSize = st.tyreSizeText ? P.geometry(P.tireSize(st.tyreSizeText)) : null; } catch (e) { st.tyreSize = null; }
     st.orig = valuesFromDesc(d.vehicle);
     st.cur = clone(st.orig);
     st.wbDef = valuesFromDesc(d.vehicle, 'wb');
@@ -164,13 +174,13 @@
     const min = Math.min(min0, typeof orig === 'number' ? orig : min0), max = Math.max(max0, typeof orig === 'number' ? orig : max0);
     const wrap = document.createElement('div');
     wrap.className = 'ctl';
-    const id = 'c_' + path.join('_');
+    const id = 'c_' + path.join('_'), plain = String(label).replace(/<[^>]+>/g, '');
     wrap.innerHTML = `
       <div class="ctl-head"><span class="dot"></span><label for="${id}">${label} <span class="unit">${unit}</span></label>
         <span class="src" title="${srcInfo.title || ''}">${srcInfo.text || ''}</span></div>
       <div class="ctl-row"><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">
-        <input type="number" min="${min}" max="${max}" step="${step}" aria-label="${label} value">
-        <button class="reset" type="button" title="Back to ${orig ?? 'engine default'}" aria-label="Reset ${label}"><svg><use href="#i-reset"/></svg></button></div>
+        <input type="number" min="${min}" max="${max}" step="${step}" aria-label="${plain} value">
+        <button class="reset" type="button" title="Back to ${orig ?? 'engine default'}" aria-label="Reset ${plain}"><svg><use href="#i-reset"/></svg></button></div>
       ${help && opts.help !== false ? `<p class="help">${help}</p>` : ''}`;
     const range = wrap.querySelector('input[type=range]'), numb = wrap.querySelector('input[type=number]');
     const sync = () => {
@@ -185,29 +195,79 @@
     const set = v => { setPath(st.cur, path, v); sync(); changed(); };
     range.addEventListener('input', () => set(+range.value));
     numb.addEventListener('change', () => { if (numb.value === '') set(orig); else if (Number.isFinite(+numb.value)) set(+numb.value); });
+    numb.addEventListener('keydown', e => { if (e.key === 'Enter') { numb.blur(); } if (e.key === 'Escape') { numb.value = get() == null ? '' : +(+get()).toFixed(6); numb.blur(); } });
+    numb.title = 'Click to type a value, Enter to apply, Esc to cancel';
     wrap.querySelector('.reset').addEventListener('click', () => set(clone(orig)));
     wrap._sync = sync;
     sync();
     return wrap;
   }
 
-  function group(title, src, children, extra) {
+  function group(title, src, children, extra, charts) {
     const g = document.createElement('section');
     g.className = 'group';
     g.innerHTML = `<div class="group-head"><h3>${title}</h3><span class="src" title="${src || ''}">${src ? '<svg><use href="#i-file"/></svg>' + src.split('/').pop() : ''}</span></div>`;
+    (charts || []).forEach(c => g.appendChild(c));
     children.forEach(c => g.appendChild(c));
     if (extra) g.appendChild(extra);
     return g;
   }
 
+  // ---- live graph inside a card: spec() -> {series, x0, x1, extra, opts, note}, refreshed on every recalc ----
+  st.cards = [];
+  // new cards draw at once (after the DOM settles) instead of waiting for the next recalculation
+  let cardsQueued = false;
+  function queueCards() { if (cardsQueued) return; cardsQueued = true; setTimeout(() => { cardsQueued = false; updateCards(); }, 0); }
+  function cardChart(spec) {
+    const wrap = document.createElement('div');
+    wrap.className = 'card-chart';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('chart');
+    const note = document.createElement('p');
+    note.className = 'help chart-note';
+    wrap.append(svg, note);
+    let chart = null;
+    st.cards.push(() => {
+      if (!wrap.isConnected) return false;          // dropped when its card is re-rendered
+      const g = st.car ? spec() : null;
+      wrap.hidden = !g;
+      if (!g) return true;
+      if (!chart) { chart = new TireTuneChart.Chart(svg, g.opts); chart.onDragEnd = () => changed(); }
+      chart.set(g.series, g.x0, g.x1, { ...(g.extra || {}), handles: g.handles || (g.extra || {}).handles || [] });
+      note.textContent = g.note || '';
+      return true;
+    });
+    queueCards();
+    return wrap;
+  }
+  function updateCards() { st.cards = st.cards.filter(u => u()); }
+
+  // a value changed by dragging a graph handle: rebuild the car and every graph now (cheap), the scenario on release
+  let dragFrame = 0;
+  function dragSet(path, value) {
+    setPath(st.cur, path, value);
+    if (dragFrame) return;
+    dragFrame = requestAnimationFrame(() => {
+      dragFrame = 0;
+      st.car = S.buildCar(simVals(st.cur), st.geo);
+      updateCards();
+      const n = countDiffs(st.cur, st.orig);
+      $('dirty-count').textContent = n;
+      $('btn-review').disabled = n === 0 || !st.data.vehicle.writable;
+      $('btn-reset-all').disabled = n === 0;
+      document.querySelectorAll('.ctl').forEach(c => c._sync && c._sync());
+      clearTimeout(st.recalcTimer);
+      st.recalcTimer = setTimeout(() => recalc(false), 220);
+    });
+  }
+  const presetCoeff = () => { const p = (st.data.presets || []).find(x => x.name === st.preset); return p ? { ...P.source, ...p.coeff } : null; };
+
   function renderControls() {
     renderChassis(); renderAxles(); renderTyre(); renderTemplates();
   }
 
-  function renderChassis() {
-    const box = $('tab-chassis'), v = st.data.vehicle;
-    box.innerHTML = '';
-    const rb = v.rigidBody;
+  function bodyGroup() {
+    const rb = st.data.vehicle.rigidBody;
     const massDef = ['Mass', 'Mass', 'kg', 200, Math.max(6000, (rb.Mass.value || 0) * 2), 5, 'Total vehicle mass (RigidBody).'];
     const comDefs = [
       ['CenterOfMass', 'CoM height', 'm', -1, 3, 0.005, 'Higher = more load transfer: more roll, pitch and weight shift.', 1],
@@ -217,7 +277,13 @@
     const src = f => ({ text: srcLabel(f.src), title: f.src });
     const ctls = [control(['rigidBody', 'Mass'], massDef, src(rb.Mass))];
     for (const d of comDefs) ctls.push(control(['rigidBody', 'CenterOfMass', d[7]], d, src(rb.CenterOfMass)));
-    box.appendChild(group('Body', '', ctls));
+    return group('Body', '', ctls);
+  }
+
+  function renderChassis() {
+    const box = $('tab-chassis'), v = st.data.vehicle;
+    box.innerHTML = '';
+    box.appendChild(bodyGroup());
     // geometry
     const geo = document.createElement('section');
     geo.className = 'group';
@@ -271,11 +337,41 @@
     wheels.className = 'help';
     wheels.textContent = 'Wheels: ' + a.wheels.map(w => `${w.name} (${w.pivot})`).join(', ');
     box.appendChild(wheels);
-    box.appendChild(group('Drive', '', AXLE_TOP.map(d => control(['axles', i, d[0]], d, { text: srcLabel(a.props[d[0]].src), title: a.props[d[0]].src }))));
-    for (const [k, defs] of Object.entries(AXLE_DEFS)) {
-      if (!st.cur.axles[i][k]) continue;
+    box.appendChild(axleGroup(i, 'Drive'));
+    box.appendChild(alignGroup(i));
+    for (const k of Object.keys(AXLE_DEFS)) {
+      if (st.cur.axles[i][k]) box.appendChild(axleGroup(i, k));
+    }
+  }
+
+  // one axle card (controls + live graphs); used by the Axles tab and the 3D inspector
+  function axleGroup(i, k) {
+    const v = st.data.vehicle, a = v.axles[i];
+    if (k === 'Drive') return group('Drive', '', AXLE_TOP.map(d => control(['axles', i, d[0]], d, { text: srcLabel(a.props[d[0]].src), title: a.props[d[0]].src })));
+    const defs = AXLE_DEFS[k];
+    {
       const info = a[k];
-      const ctls = defs.map(d => control(['axles', i, k, d[0]], d, { text: srcLabel(info.fields[d[0]].src, info.conf), title: info.fields[d[0]].src || info.conf }));
+      const HEAD = { Suspension: ['SpringRate', 'MaxTravelUp', 'MaxTravelDown'], Wheel: ['BrakeTorque', 'Radius'], Tyre: ['LateralFriction', 'LongitudinalFriction'],
+                     Steering: ['SteeringRatio'], Swaybar: ['Stiffness'] }[k] || [];
+      const mk = d => control(['axles', i, k, d[0]], d, { text: srcLabel((info.fields[d[0]] || {}).src, info.conf), title: (info.fields[d[0]] || {}).src || info.conf });
+      const ENGINE = { FixedAxleDistance: ['Ackermann axle distance', 'm', 'Ackermann steering: negative = automatic, 0 = off, else the distance to the fixed axle.'] };
+      const known = new Set(defs.map(d => d[0]));
+      const extraDefs = Object.entries(info.fields).filter(([n, f]) => f.engine && !known.has(n)).map(([n]) => {
+        const v = getPath(st.wbDef, ['axles', i, k, n]);
+        const span = Math.max(Math.abs(v || 0) * 2, 1);
+        const e = ENGINE[n] || [n.replace(/_/g, ' '), '', 'Field reported by the engine in this build.'];
+        return [n, e[0], e[1], +((v || 0) - span).toFixed(3), +((v || 0) + span).toFixed(3), +(span / 200).toPrecision(2), e[2]];
+      });
+      const usable = defs.concat(extraDefs).filter(d => info.fields[d[0]] !== undefined);
+      const ctls = usable.filter(d => HEAD.includes(d[0])).map(mk);
+      const rest = usable.filter(d => !HEAD.includes(d[0]));
+      if (rest.length) {
+        const more = document.createElement('details');
+        more.className = 'more-numbers';
+        more.innerHTML = `<summary>More numbers (${rest.length})</summary>`;
+        rest.forEach(d => more.appendChild(mk(d)));
+        ctls.push(more);
+      }
       let extra = null;
       if (v.axles.length > 1) {
         extra = document.createElement('div');
@@ -287,17 +383,91 @@
           toast(`${k} copied to the other axles (steering angle kept per axle).`);
         });
       }
-      box.appendChild(group(k, info.conf, ctls, extra));
+      return group(k, info.conf, ctls, extra, axleCharts(k, i));
     }
   }
 
+  // ---- alignment: camber / toe from the hub angles, caster / SAI from the kingpin axis (align.js) ----------
+  // alignment of one axle: decoded camber / toe / caster / SAI and convention-preserving setters (align.js)
+  function alignAccess(i) {
+    const AL = TireTuneAlign, a = st.data.vehicle.axles[i];
+    const wheel = (a.wheels || []).find(w => Array.isArray(w.angles)) || (a.wheels || [])[0];
+    const kp = (a.kingpins || []).find(k => Array.isArray(k.angles));
+    const wGet = () => (wheel && st.cur.axles[i].align ? st.cur.axles[i].align.wheels[wheel.name] : null);
+    const kGet = () => (kp && st.cur.axles[i].align ? st.cur.axles[i].align.kingpins[kp.id] : null);
+    const wd = () => AL.decodeWheel(wGet()), kd = () => AL.decodeKingpin(kGet());
+    const wEdit = ['roll', 'yaw'].includes(wd().family), kEdit = ['upright', 'z90', 'x90'].includes(kd().family);
+    // magnitudes on screen; the sign stays the convention this model already uses
+    const signed = (cur, mag) => (cur < 0 ? -mag : mag);
+    const setW = (key, mag) => { if (!wEdit) return; const d = wd(); const c = key === 'camber' ? signed(d.camber, mag) : d.camber, t = key === 'toe' ? signed(d.toe, mag) : d.toe; dragSet(['axles', i, 'align', 'wheels', wheel.name], AL.encodeWheel(d, c, t)); };
+    const setK = (key, mag) => { if (!kEdit) return; const d = kd(); const c = key === 'caster' ? signed(d.caster, mag) : d.caster, s = key === 'sai' ? signed(d.sai, mag) : d.sai; dragSet(['axles', i, 'align', 'kingpins', kp.id], AL.encodeKingpin(d, c, s)); };
+    return { a, wheel, kp, wd, kd, wEdit, kEdit, setW, setK };
+  }
+
+  function alignGroup(i) {
+    const AL = TireTuneAlign;
+    const g = document.createElement('section');
+    g.className = 'group';
+    g.innerHTML = '<div class="group-head"><h3>Alignment</h3><span class="src">drag the dots</span></div>';
+    const { a, wheel, kp, wd, kd, wEdit, kEdit, setW, setK } = alignAccess(i);
+    const grid = document.createElement('div');
+    grid.className = 'align-grid';
+    const cards = [
+      AL.diagram('camber', () => (wEdit ? wd().camber : null), m => setW('camber', m), wEdit),
+      AL.diagram('toe', () => (wEdit ? wd().toe : null), m => setW('toe', m), wEdit),
+      AL.diagram('caster', () => (kEdit ? kd().caster : null), m => setK('caster', m), kEdit),
+      AL.diagram('sai', () => (kEdit ? kd().sai : null), m => setK('sai', m), kEdit),
+    ];
+    cards.forEach(c => { c.onDragEnd = () => changed(); grid.appendChild(c); });
+    g.appendChild(grid);
+    const notes = [];
+    if (!wheel || !Array.isArray(wheel.angles)) notes.push('No hub angles on this axle yet (true for SampleCar-based and most custom cars). Set the left wheel\'s Angles once in Workbench, check it with "Show diag shapes", then tune it here. Keep the values small: most good setups sit at 0.1-1.5°.');
+    else if (!wEdit) notes.push(`Hub angles ${wheel.angles.join(' ')} use a layout TireTune does not recognise; shown read-only.`);
+    if (!kp) notes.push(a.index === 0 || (st.cur.axles[i].Suspension || {}).MaxSteeringAngle ? 'No kingpin axis on this axle: steering uses the wheel position (the pre-1.9 behaviour). BI recommends adding one with 3-6° caster.' : '');
+    else if (!kEdit) notes.push(`Kingpin angles ${kp.angles.join(' ')} use a layout TireTune does not recognise; shown read-only.`);
+    if (a.mirror === 0) notes.push('Mirror Wheel Position is off on this axle: the right side is set separately in Workbench.');
+    else if (wEdit || kEdit) notes.push(`Edits ${wheel ? wheel.name : 'the left side'}; Mirror Wheel Position copies it to the right. Values are read in the convention this model already uses (sign as BI set it); confirm with "Show diag shapes" in game.`);
+    const p = document.createElement('p');
+    p.className = 'help';
+    p.textContent = notes.filter(Boolean).join(' ');
+    g.appendChild(p);
+    st.cards.push(() => { if (!g.isConnected) return false; cards.forEach(c => c.draw()); return true; });
+    return g;
+  }
+
+  function axleCharts(k, i) {
+    const C = TireTuneContext;
+    const args = () => [st.car.axles[i], st.carO.axles[i], st.car.static[i] / 2, st.carO.static[i] / 2];
+    const set = (g, key, v) => { if (st.cur.axles[i][g]) dragSet(['axles', i, g, key], v); };
+    if (k === 'Suspension') return [cardChart(() => C.axleGraph('Suspension', ...args(), { set })), cardChart(() => C.axleGraph('Damper', ...args(), { set }))];
+    if (k === 'Wheel') return [cardChart(() => C.axleGraph('Wheel', ...args(), { set }))];
+    if (k === 'Tyre') return [cardChart(() => C.axleGraph('Tyre', ...args(), { color: AX_HEX[i % 5], set, latF: (st.cur.axles[i].Tyre || {}).LateralFriction ?? (st.wbDef && st.wbDef.axles[i] && st.wbDef.axles[i].Tyre ? st.wbDef.axles[i].Tyre.LateralFriction : 1) }))];
+    if (k === 'Steering') {
+      const pick = (vals, g, key) => { const v = vals.axles[i][g] && vals.axles[i][g][key]; if (v != null) return v; const d = st.wbDef && st.wbDef.axles[i] && st.wbDef.axles[i][g]; return d ? d[key] : null; };
+      return [cardChart(() => C.axleGraph('Steering', ...args(), {
+        ratio: pick(st.cur, 'Steering', 'SteeringRatio'), ratioO: pick(st.orig, 'Steering', 'SteeringRatio'),
+        max: pick(st.cur, 'Suspension', 'MaxSteeringAngle'), maxO: pick(st.orig, 'Suspension', 'MaxSteeringAngle'),
+        maxSigned: pick(st.cur, 'Suspension', 'MaxSteeringAngle'), set }))];
+    }
+    return [];
+  }
+
   function renderTyre() {
-    const box = $('tab-tyre'), v = st.data.vehicle, pj = v.pacejka;
+    let box = $('tab-tyre');
+    const v = st.data.vehicle, pj = v.pacejka;
     box.innerHTML = '';
     if (!pj) {
-      box.innerHTML = '<div class="note"><strong>No Pacejka2002 TyreModel.</strong> The 1.9 tyre model needs Arma Reforger 1.9 ' +
-        '(Arma Reforger <strong>Experimental Tools</strong> until 1.9 is released). In 1.8 / stable Tools vehicles use the older ' +
-        'Pacejka94 <code>PacejkaTire_*.conf</code>, which TireTune does not edit. The per-axle Tyre, Wheel, Suspension and Steering values still work.</div>';
+      const legacy = v.legacyPacejka;
+      const mass = (st.cur.rigidBody.Mass || 0);
+      const presets = v.tyrePresets || [];
+      const pick = presets.filter(p => mass >= p.fromMass).pop() || presets[0];
+      box.innerHTML = `<div class="note"><strong>No 1.9 tyre model on this vehicle.</strong> ` +
+        (legacy ? `It only has the pre-1.9 <code>Pacejka</code> slot (<code>${legacy.split('/').pop()}</code>, Pacejka94). ` : '') +
+        `Stock 1.9 vehicles carry a <code>TyreModel Pacejka2002</code>; add one from a stock preset and it becomes fully tunable here ` +
+        `(the legacy slot is left as it is). Needs Arma Reforger 1.9 (Experimental Tools until release).</div>` +
+        `<div class="tpl-grid">${presets.map(p => `<button type="button" class="tpl${p === pick ? ' on' : ''}" data-ref="${p.ref}" style="--tpl:${p === pick ? '#4fb3ff' : '#64768d'}"><i></i><b>Add ${p.name}</b><span>${p.name === 'Car_80s' ? 'Cars and light vehicles' : p.name === 'Truck_80s' ? 'Trucks, from about 6 t' : 'Military 4x4s and APCs, 2.5-6 t'}${p === pick ? ' (suggested for ' + Math.round(mass) + ' kg)' : ''}</span></button>`).join('')}</div>` +
+        `<p class="help">Opens Review with the one added line; nothing is written until you press Write files.</p>`;
+      box.querySelectorAll('[data-ref]').forEach(b => b.addEventListener('click', () => { st.addTyreModel = b.dataset.ref; review(); }));
       return;
     }
     const head = document.createElement('div');
@@ -311,7 +481,7 @@
       <label>&nbsp;<button class="btn ghost" type="button" id="preset-load">Load preset values</button></label>`;
     box.appendChild(pr);
     pr.querySelector('#preset-sel').value = st.preset;
-    pr.querySelector('#preset-sel').addEventListener('change', e => { st.preset = e.target.value; drawCharts(); });
+    pr.querySelector('#preset-sel').addEventListener('change', e => { st.preset = e.target.value; drawCharts(); updateCards(); });
     pr.querySelector('#preset-load').addEventListener('click', () => {
       const p = (st.data.presets || []).find(x => x.name === st.preset);
       if (!p) { toast('Pick a stock preset to compare first.'); return; }
@@ -325,15 +495,76 @@
       const f = d[7] ? pj.groups[d[7]].fields[d[0]] : pj.top[d[0]];
       return control(path, d, { text: srcLabel(f && f.src), title: f && f.src });
     });
-    box.appendChild(group('Key coefficients', '', ctls));
-    const det = document.createElement('details');
-    det.className = 'all-coeff';
-    det.innerHTML = '<summary>Every coefficient</summary>';
-    for (const [g, gv] of Object.entries(pj.groups)) {
-      const cs = Object.keys(gv.fields).map(k => control(['pacejka', 'groups', g, k], [k, k, '', -50, 50, 0.001, ''], { text: srcLabel(gv.fields[k].src), title: gv.fields[k].src }, { help: false }));
-      det.appendChild(group(g, '', cs));
+    const C = TireTuneContext, FEEL = TireTuneFeel;
+    const flat = () => S.flatPacejka(st.cur.pacejka);
+    const pset = (key, v) => {
+      if (key === 'NominalLoad' || key === 'NominalRadius') { dragSet(['pacejka', key], v); return; }
+      for (const [g, gv] of Object.entries(st.cur.pacejka.groups)) if (key in gv) { dragSet(['pacejka', 'groups', g, key], v); return; }
+    };
+    // feel tiles: the curve in plain words, live
+    const tiles = document.createElement('div');
+    tiles.className = 'feel-tiles';
+    box.appendChild(tiles);
+    st.cards.push(() => {
+      if (!tiles.isConnected) return false;
+      const F0 = flat().NominalLoad || 4000, s = FEEL.shape('lat', flat(), F0), so = FEEL.shape('lat', S.flatPacejka(st.orig.pacejka), F0);
+      const l = FEEL.shape('lon', flat(), F0), lo = FEEL.shape('lon', S.flatPacejka(st.orig.pacejka), F0);
+      const w = FEEL.words('lat', s), wl = FEEL.words('lon', l);
+      const tile = (title, word, val, now, was, max, tip) => `<div class="feel" title="${tip}"><span>${title}</span><b>${word}</b><em>${val}</em>
+        <div class="feel-bar"><i style="width:${Math.min(100, now / max * 100)}%"></i><u style="left:${Math.min(100, was / max * 100)}%"></u></div></div>`;
+      tiles.innerHTML =
+        tile('Cornering grip', w.grip, `mu ${s.mu.toFixed(2)}`, s.mu, so.mu, 1.8, 'Peak sideways grip at nominal load (the top of the cornering curve)') +
+        tile('Turn-in', w.bite, `80 % grip at ${s.bite.toFixed(1)}°`, 12 - Math.min(12, s.bite), 12 - Math.min(12, so.bite), 12, 'How little slip the tyre needs to bite: sharp tyres respond to small steering inputs') +
+        tile('Breakaway', w.brk, `${Math.round(s.drop * 100)} % drop after peak`, s.drop, so.drop, 0.5, 'How much grip is lost once the tyre slides: progressive is forgiving, snappy is twitchy') +
+        tile('Drive / brake grip', wl.grip, `mu ${l.mu.toFixed(2)}, peak at ${l.peakX.toFixed(0)} % slip`, l.mu, lo.mu, 1.8, 'Peak traction and braking grip at nominal load');
+      return true;
+    });
+    for (const ax of ['lat', 'lon']) {
+      const sec = document.createElement('section');
+      sec.className = 'group feel-editor';
+      sec.innerHTML = `<div class="group-head"><h3>${FEEL.AXES[ax].name} curve</h3><span class="src">drag the dots</span></div>`;
+      sec.appendChild(cardChart(() => {
+        const r = FEEL.editor(ax, flat, S.flatPacejka(st.orig.pacejka), presetCoeff(), pset);
+        r.note = ax === 'lat'
+          ? 'Blue: grip (up/down) and where it peaks (left/right). Green: turn-in, how fast grip builds. Amber: what is left after the limit. Thin lines: light and heavy load. Dashed: original.'
+          : 'Same handles for traction and braking: peak grip, how quickly it bites with wheel slip, and what is left when the wheel spins or locks.';
+        return r;
+      }));
+      box.appendChild(sec);
     }
-    box.appendChild(det);
+    const pacGraph = g => () => {
+      const r = C.pacGraph(g, S.flatPacejka(st.cur.pacejka), S.flatPacejka(st.orig.pacejka), presetCoeff());
+      if (r) r.note = C.GROUP_INFO[g];
+      return r;
+    };
+    box.appendChild(group('Load sensitivity', '', ctls.filter((_, n) => n < 2), null, [cardChart(pacGraph('Reference'))]));
+    const fine = document.createElement('details');
+    fine.className = 'more-numbers';
+    fine.innerHTML = '<summary>Fine-tune the handles as numbers</summary>';
+    ctls.slice(2).forEach(c => fine.appendChild(c));
+    box.appendChild(fine);
+    const expert = document.createElement('details');
+    expert.className = 'expert';
+    expert.innerHTML = '<summary>Expert: all Pacejka coefficients, by what they shape</summary>';
+    box.appendChild(expert);
+    const realBox = box;
+    box = expert;
+    for (const [g, gv] of Object.entries(pj.groups)) {
+      const det = document.createElement('details');
+      det.className = 'pac-group';
+      det.innerHTML = `<summary><b>${g.replace(/([a-z])([A-Z])/g, '$1 $2')}</b><span>${C.GROUP_INFO[g] || ''}</span></summary>`;
+      det.appendChild(cardChart(pacGraph(g)));
+      for (const k of Object.keys(gv.fields)) {
+        const meta = C.PAC_META[k] || [k, ''];
+        const o = getPath(st.orig, ['pacejka', 'groups', g, k]);
+        const [lo, hi, step] = C.rangeFor(k, typeof o === 'number' ? o : 0);
+        det.appendChild(control(['pacejka', 'groups', g, k], [k, `${meta[0]} <span class="code">${k}</span>`, '', lo, hi, step, meta[1]],
+          { text: srcLabel(gv.fields[k].src), title: gv.fields[k].src }));
+      }
+      det.addEventListener('toggle', () => { if (det.open) updateCards(); });
+      box.appendChild(det);
+    }
+    box = realBox;
   }
 
 
@@ -466,12 +697,13 @@
     const car = S.buildCar(simVals(st.cur), st.geo), carO = S.buildCar(simVals(st.orig), st.geo);
     st.car = car; st.carO = carO;
     let frames, ghost = [];
-    if (st.scenario === 'corner') { frames = S.corner(car, st.speed, st.radius); ghost = S.corner(carO, st.speed, st.radius); }
+    if (st.scenario === 'corner') { frames = S.corner(car, st.speed, st.radius * st.dir); ghost = S.corner(carO, st.speed, st.radius * st.dir); }
     else if (st.scenario === 'brake') frames = S.brake(car, st.speed);
     else frames = S.launch(car);
     st.frames = frames;
     stage.setScene(car, frames, ghost, st.scenario);
     drawCharts();
+    updateCards();
     renderReadouts(car, carO, frames);
   }
 
@@ -556,6 +788,8 @@
     $('wb-info').innerHTML = `<div>Prefab <code>${v.prefab}</code></div>
       <div>New configs go to <code>${d.targetAddon || '-'}</code></div>
       <div>Net API port <code>${d.wbPort}</code>. Apply asks Workbench to register and reload; otherwise press Reimport in the plugin.</div>
+      <div>Writable addons: <code>${(d.addons || []).join(', ') || 'none'}</code></div>
+      ${(d.addons || []).length === 1 && d.addons[0] === 'TireTune_Workbench' ? '<div style="color:var(--warn)">Only TireTune itself is loaded. To tune your mod\'s vehicles, open your mod\'s project in Workbench with TireTune_Workbench as a dependency (or add your mod to TireTune\'s addon.gproj), then Open selected vehicle again.</div>' : ''}
       ${d.vehicle.missing.length ? `<div style="color:var(--warn)">Not readable: <code>${d.vehicle.missing.join(', ')}</code></div>` : ''}
       ${(d.wbMismatch || []).length ? `<div style="color:var(--warn)">Workbench resolves ${d.wbMismatch.length} value(s) differently than the text: ${d.wbMismatch.slice(0, 6).map(m => `<code>${m.key}</code> ${m.text} vs ${m.workbench}`).join(', ')}. Reopen the vehicle from the plugin.</div>` : (d.source === 'dev' ? '' : '<div style="color:var(--ok)">Values match Workbench.</div>')}`;
   }
@@ -582,7 +816,7 @@
   }
 
   function editsPayload() {
-    return { rigidBody: st.cur.rigidBody, axles: st.cur.axles, pacejka: st.cur.pacejka, pacejkaTarget: $('pac-target').value };
+    return { rigidBody: st.cur.rigidBody, axles: st.cur.axles, pacejka: st.cur.pacejka, pacejkaTarget: $('pac-target').value, addTyreModel: st.addTyreModel || null };
   }
 
   async function applyNow() {
@@ -662,6 +896,65 @@
     handbrakeFactor: ['Wheel', 'HandbrakeTorqueFactor'], roughness: ['Tyre', 'Roughness'], longitudinalFriction: ['Tyre', 'LongitudinalFriction'],
     lateralFriction: ['Tyre', 'LateralFriction'], rollingResistance: ['Tyre', 'RollingResistance'], rollingDrag: ['Tyre', 'RollingDrag'], tread: ['Tyre', 'Tread'],
   };
+  const num1 = (v, d = 2) => (v == null ? '-' : (+v).toFixed(d));
+  globalThis.TireTuneUI = {
+    // ---- hooks for the 3D corner rig (rig3d.js) ----
+    ready: () => !!(st.cur && st.car),
+    axleCount: () => (st.cur ? st.cur.axles.length : 0),
+    value: path => getPath(st.cur, path),
+    engineDefault: path => getPath(st.wbDef, path),
+    set: (path, v) => { if (getPath(st.cur, path.slice(0, -1))) dragSet(path, v); },
+    done: () => changed(),
+    align: i => { const x = alignAccess(i), w = x.wd(), k = x.kd(); return { camber: w.camber || 0, toe: w.toe || 0, caster: k.caster || 0, sai: k.sai || 0, wEdit: x.wEdit, kEdit: x.kEdit, hasKingpin: !!x.kp }; },
+    setAlign: (i, key, mag) => { const x = alignAccess(i); if (key === 'camber' || key === 'toe') x.setW(key, mag); else x.setK(key, mag); },
+    pacejka: () => (st.cur && st.cur.pacejka ? S.flatPacejka(st.cur.pacejka) : null),
+    tyreSize: () => st.tyreSize || null,
+    car: () => st.car,
+    frame: () => stage.frameAt(stage.t),
+    scenario: () => st.scenario,
+    refresh: () => { updateCards(); document.querySelectorAll('.ctl').forEach(c => c._sync && c._sync()); },
+    // hover card: the part's key numbers, live
+    partSummary(p) {
+      const car = st.car, cur = st.cur;
+      if (!car) return p.label;
+      const fr = stage.frameAt(stage.t), i = p.axle, ax = cur.axles[i] || {}, sa = car.axles[i];
+      const k = p.side > 0 ? 0 : 1, af = fr && fr.axles && fr.axles[i];
+      const live = af && af.loads ? `<br>now: ${(af.loads[k] / 1000).toFixed(1)} kN, grip used ${Math.round((af.use ? af.use[k] : 0) * 100)} %` : '';
+      const sum = S.summary(car, st.speed, st.radius);
+      if (p.kind === 'body') return `<b>Body</b><br>${Math.round(car.mass)} kg, front weight ${(sum.frontShare * 100).toFixed(1)} %<br><i>click to adjust mass and CoM</i>`;
+      if (p.kind === 'com') return `<b>Centre of mass</b><br>${(cur.rigidBody.CenterOfMass || []).map(v => num1(v)).join(' / ')} m (lateral / height / fwd)<br>height above ground ${num1(car.h)} m`;
+      if (p.kind === 'tyre') return `<b>${p.label}</b><br>lateral friction ${num1((ax.Tyre || {}).LateralFriction)}, longitudinal ${num1((ax.Tyre || {}).LongitudinalFriction)}${live}<br><i>click to adjust; the shared tyre model is in Tyre model</i>`;
+      if (p.kind === 'wheel') return `<b>${p.label}</b><br>radius ${num1(sa.radius, 3)} m, brake ${Math.round(sa.brakeTorque)} N m${live}`;
+      if (p.kind === 'spring') { const r = sum.ride[i]; return `<b>${p.label}</b><br>${Math.round(sa.spring / 1000)} N/mm, ride ${num1(r.freq)} Hz, damping ${num1(r.zeta)}<br>sag ${Math.round(r.sag * 1000)} of ${Math.round(r.travel * 1000)} mm travel${live}`; }
+      if (p.kind === 'steering') return `<b>${p.label}</b><br>lock ${num1(sa.steerMax, 1)} deg, ratio ${num1((ax.Steering || {}).SteeringRatio, 1)}`;
+      if (p.kind === 'drive') return `<b>${p.label}</b><br>torque share ${num1(ax.TorqueShare)}`;
+      return p.label;
+    },
+    // inspector: the same controls and graphs as the side panel, for the clicked part
+    partPanel(p) {
+      const wrap = document.createElement('div');
+      const head = document.createElement('div');
+      head.className = 'insp-head';
+      head.innerHTML = `<b>${p.label}</b><button class="icon-btn sm" type="button" aria-label="Close">&times;</button>`;
+      head.querySelector('button').addEventListener('click', () => { if (wrap.closest('.rig-inspector') && globalThis.TireTuneRig) TireTuneRig.select(null); else if (globalThis.TireTune3D) TireTune3D.select(null); });
+      wrap.appendChild(head);
+      const kinds = { tyre: 'Tyre', wheel: 'Wheel', spring: 'Suspension', steering: 'Steering', drive: 'Drive' };
+      if (p.kind === 'align') wrap.appendChild(alignGroup(p.axle));
+      else if (p.kind === 'body' || p.kind === 'com') wrap.appendChild(bodyGroup());
+      else if (kinds[p.kind] && (kinds[p.kind] === 'Drive' || st.cur.axles[p.axle][kinds[p.kind]])) wrap.appendChild(axleGroup(p.axle, kinds[p.kind]));
+      else wrap.insertAdjacentHTML('beforeend', '<p class="help">This axle has no such object in the prefab.</p>');
+      if (p.kind === 'tyre' && st.cur.pacejka) {
+        const b = document.createElement('button');
+        b.className = 'btn ghost sm';
+        b.type = 'button';
+        b.textContent = 'Shared tyre model (Pacejka) in the side panel';
+        b.addEventListener('click', () => document.querySelector('[data-tab=tyre]').click());
+        wrap.appendChild(b);
+      }
+      return wrap;
+    },
+  };
+
   globalThis.TireTuneBridge = {
     initialState() {
       if (!st.cur) return null;
@@ -691,12 +984,178 @@
     st.view = view;
     document.querySelectorAll('#view-tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.view === view));
     $('view-vehicle').hidden = view !== 'vehicle';
+    $('view-3d').hidden = view !== '3d';
     $('view-tirelab').hidden = view !== 'tirelab';
+    document.body.classList.toggle('wide', view === 'tirelab');   // the studio has its own controls: use the whole window
+    if (view === 'tirelab') renderStudio();
+    else renderControls();
+  }
+
+  function openOriginalTireLab(on) {
+    $('studio').hidden = on;
+    $('tirelab-wrap').hidden = !on;
     const f = $('tirelab');
-    if (view === 'tirelab') {
-      if (!f.src) f.src = 'tirelab.html';
-      else f.contentWindow.dispatchEvent(new CustomEvent('openai:set_globals', { detail: { globals: { widgetState: { privateContent: { state: { version: 2, data: TireTuneBridge.initialState() } } } } } }));
-    } else renderControls();
+    if (!on) { renderStudio(); return; }
+    if (!f.src) f.src = 'tirelab.html';
+    else f.contentWindow.dispatchEvent(new CustomEvent('openai:set_globals', { detail: { globals: { widgetState: { privateContent: { state: { version: 2, data: TireTuneBridge.initialState() } } } } } }));
+  }
+
+  // ---- Tyre Studio: the whole tyre model as pictures you can grab, every number a slider you can also type into --
+  function renderStudio() {
+    const box = $('studio'), v = st.data && st.data.vehicle, pj = v && v.pacejka;
+    if (!box) return;
+    box.innerHTML = '';
+    const C = TireTuneContext, FEEL = TireTuneFeel;
+    const top = document.createElement('div');
+    top.className = 'studio-bar';
+    top.innerHTML = `<div><b>Tyre Studio</b><span class="muted small">${pj ? `${pj.class}, shared by every wheel &middot; ${pj.conf ? pj.conf.split('/').pop() : 'inline in the prefab'}` : 'no 1.9 tyre model on this vehicle yet'}</span></div>
+      <div class="studio-actions"><label class="small muted">Compare with <select class="input" id="studio-preset"><option value="">nothing</option>${(st.data.presets || []).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}</select></label>
+      <button class="btn ghost sm" type="button" id="studio-original">Original Tire Lab</button></div>`;
+    box.appendChild(top);
+    top.querySelector('#studio-original').addEventListener('click', () => openOriginalTireLab(true));
+    // the suspension corner rig: drag the parts, click to edit them (rig3d.js)
+    const rigRow = document.createElement('div');
+    rigRow.className = 'studio-row rig-row';
+    rigRow.innerHTML = `<section class="studio-card rig-card"><h3>Suspension corner <span>drag the dots &middot; click a part</span></h3>
+        <div class="rig-top"><div class="rig-axles">${st.cur.axles.map((_, i) => `<button type="button" data-rig-axle="${i}">Axle ${i + 1}</button>`).join('')}</div>
+          <div class="tyre-size"><label>Tyre size <input type="text" spellcheck="false" placeholder="205/55R16"></label><span class="ts-out"></span>
+            <button class="btn ghost sm" type="button" data-ts="nominal">Use as NominalRadius</button>
+            <button class="btn ghost sm" type="button" data-ts="wheel">Use as wheel radius</button></div></div>
+        <div class="rig-host"><div class="rig-tip" hidden></div><div class="rig-hud"></div>
+          <div class="rig-sliders">
+            <label class="rig-slip">test slip angle <input type="range" min="0" max="12" step="0.5" value="4"><output>4°</output></label>
+            <label class="rig-press" title="Preview only: Reforger has no tyre pressure field">pressure <input type="range" min="0.8" max="4" step="0.1" value="2.3"><output>2.3 bar</output></label>
+            <label class="rig-squish" title="Draw the squash bigger so it reads on screen">squash <input type="range" min="1" max="5" step="0.5" value="3"><output>x3</output></label>
+          </div>
+          <div class="rig-legend"><i style="--c:#e3ebf5"></i>bump / droop <i style="--c:#ef6d78"></i>bump stop <i style="--c:#f0b35a"></i>droop limit, spring
+            <i style="--c:#4fb3ff"></i>steer <i style="--c:#7fd3ff"></i>camber, toe <i style="--c:#5ed6a0"></i>caster / SAI &middot; angles drawn x3 &middot; double-click to centre</div></div>
+      </section><aside class="studio-card rig-inspector"></aside>`;
+    box.appendChild(rigRow);
+    const rigHost = rigRow.querySelector('.rig-host'), rigInsp = rigRow.querySelector('.rig-inspector'), rigHud = rigRow.querySelector('.rig-hud');
+    // tyre size: the real radius of a 205/55R16-style size (TireLabPhysics.tireSize / geometry from the original tool)
+    const ts = rigRow.querySelector('.tyre-size input'), tsOut = rigRow.querySelector('.ts-out');
+    const tsRefresh = () => {
+      const g = st.tyreSize, rigAxle = globalThis.TireTuneRig ? TireTuneRig.axle() : 0;
+      const nr = getPath(st.cur, ['pacejka', 'NominalRadius']), wr = st.car && st.car.axles[rigAxle] ? st.car.axles[rigAxle].radius : null;
+      rigRow.querySelectorAll('[data-ts]').forEach(b => { b.disabled = !g || (b.dataset.ts === 'nominal' && !st.cur.pacejka); });
+      if (!g) { tsOut.innerHTML = `<span class="muted">wheel ${wr ? wr.toFixed(3) : '-'} m &middot; tyre model ${nr != null ? nr.toFixed(3) : '-'} m</span>`; return; }
+      const off = (v) => v == null ? '' : Math.abs(v - g.radius) / g.radius > 0.03 ? ' warn' : ' ok';
+      tsOut.innerHTML = `radius <b>${g.radius.toFixed(3)} m</b>, width ${Math.round(g.width * 1000)} mm, sidewall ${Math.round(g.sidewall * 1000)} mm &middot;
+        <span class="${off(wr)}">wheel ${wr ? wr.toFixed(3) : '-'}</span> &middot; <span class="${off(nr)}">tyre model ${nr != null ? nr.toFixed(3) : '-'}</span>`;
+    };
+    ts.value = st.tyreSizeText || '';
+    const tsApply = () => {
+      st.tyreSizeText = ts.value.trim();
+      try { st.tyreSize = st.tyreSizeText ? P.geometry(P.tireSize(st.tyreSizeText)) : null; ts.classList.remove('bad'); }
+      catch (e) { st.tyreSize = null; ts.classList.add('bad'); tsOut.textContent = e.message; return; }
+      try { localStorage.setItem('tt-size:' + st.data.vehicle.prefab, st.tyreSizeText); } catch (e) { /* storage blocked */ }
+      if (globalThis.TireTuneRig) TireTuneRig.rebuild();
+      tsRefresh();
+    };
+    ts.addEventListener('change', tsApply);
+    ts.addEventListener('keydown', e => { if (e.key === 'Enter') ts.blur(); });
+    rigRow.querySelectorAll('[data-ts]').forEach(b => b.addEventListener('click', () => {
+      if (!st.tyreSize) return;
+      const r = +st.tyreSize.radius.toFixed(3), ai = globalThis.TireTuneRig ? TireTuneRig.axle() : 0;
+      if (b.dataset.ts === 'nominal') { dragSet(['pacejka', 'NominalRadius'], r); toast(`Tyre model NominalRadius set to ${r} m. Review shows the change.`); }
+      else if (st.cur.axles[ai].Wheel) { dragSet(['axles', ai, 'Wheel', 'Radius'], r); toast(`Axle ${ai + 1} wheel Radius set to ${r} m: keep it matching your wheel mesh.`); }
+      changed(); setTimeout(tsRefresh, 300);
+    }));
+    st.cards.push(() => { if (!rigRow.isConnected) return false; tsRefresh(); return true; });
+    tsRefresh();
+    const press = rigRow.querySelector('.rig-press input'), squishIn = rigRow.querySelector('.rig-squish input');
+    press.addEventListener('input', () => { rigRow.querySelector('.rig-press output').textContent = (+press.value).toFixed(1) + ' bar'; if (globalThis.TireTuneRig) TireTuneRig.setPressure(+press.value); });
+    squishIn.addEventListener('input', () => { rigRow.querySelector('.rig-squish output').textContent = 'x' + squishIn.value; if (globalThis.TireTuneRig) TireTuneRig.setSquish(+squishIn.value); });
+    const slip = rigRow.querySelector('.rig-slip input');
+    slip.addEventListener('input', () => { rigRow.querySelector('.rig-slip output').textContent = slip.value + '°'; if (globalThis.TireTuneRig) TireTuneRig.setSlip(+slip.value); });
+    const markAxle = i => rigRow.querySelectorAll('[data-rig-axle]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.rigAxle === i));
+    rigRow.querySelectorAll('[data-rig-axle]').forEach(b => b.addEventListener('click', () => { TireTuneRig.setAxle(+b.dataset.rigAxle); markAxle(+b.dataset.rigAxle); }));
+    const mountRig = () => { TireTuneRig.mount(rigHost, rigInsp, rigHud); markAxle(TireTuneRig.axle()); };
+    if (globalThis.TireTuneRig) mountRig(); else document.addEventListener('tiretune-rig-ready', mountRig, { once: true });
+    const sel = top.querySelector('#studio-preset');
+    sel.value = st.preset;
+    sel.addEventListener('change', e => { st.preset = e.target.value; const ps = $('preset-sel'); if (ps) ps.value = st.preset; drawCharts(); updateCards(); });
+    if (!pj) {
+      const n = document.createElement('div');
+      n.className = 'note';
+      n.innerHTML = 'Add a 1.9 tyre model first: <b>Tyre model</b> tab in the side panel, pick a stock preset.';
+      box.appendChild(n);
+      return;
+    }
+    const flat = () => S.flatPacejka(st.cur.pacejka);
+    const pset = (key, val) => {
+      if (key === 'NominalLoad' || key === 'NominalRadius') { dragSet(['pacejka', key], val); return; }
+      for (const [g, gv] of Object.entries(st.cur.pacejka.groups)) if (key in gv) { dragSet(['pacejka', 'groups', g, key], val); return; }
+    };
+    // feel tiles, wide
+    const tiles = document.createElement('div');
+    tiles.className = 'feel-tiles studio-tiles';
+    box.appendChild(tiles);
+    st.cards.push(() => {
+      if (!tiles.isConnected) return false;
+      const F0 = flat().NominalLoad || 4000, o = S.flatPacejka(st.orig.pacejka);
+      const s = FEEL.shape('lat', flat(), F0), so = FEEL.shape('lat', o, F0), l = FEEL.shape('lon', flat(), F0), lo = FEEL.shape('lon', o, F0);
+      const w = FEEL.words('lat', s), wl = FEEL.words('lon', l);
+      const tile = (title, word, val, now, was, max, tip) => `<div class="feel" title="${tip}"><span>${title}</span><b>${word}</b><em>${val}</em>
+        <div class="feel-bar"><i style="width:${Math.min(100, now / max * 100)}%"></i><u style="left:${Math.min(100, was / max * 100)}%"></u></div></div>`;
+      tiles.innerHTML =
+        tile('Cornering grip', w.grip, `mu ${s.mu.toFixed(2)} (was ${so.mu.toFixed(2)})`, s.mu, so.mu, 1.8, 'Peak sideways grip at nominal load') +
+        tile('Turn-in', w.bite, `80 % grip at ${s.bite.toFixed(1)}°`, 12 - Math.min(12, s.bite), 12 - Math.min(12, so.bite), 12, 'How little slip the tyre needs to bite') +
+        tile('Corner peak', `${s.peakX.toFixed(1)}°`, 'slip angle at the limit', s.peakX, so.peakX, 20, 'Where the cornering force peaks') +
+        tile('Breakaway', w.brk, `${Math.round(s.drop * 100)} % lost after the peak`, s.drop, so.drop, 0.5, 'Progressive is forgiving, snappy is twitchy') +
+        tile('Traction / braking', wl.grip, `mu ${l.mu.toFixed(2)} at ${l.peakX.toFixed(0)} % slip`, l.mu, lo.mu, 1.8, 'Peak drive and brake grip') +
+        tile('Wheelspin', wl.brk, `${Math.round(l.drop * 100)} % lost when spinning`, l.drop, lo.drop, 0.5, 'Grip left once the wheel spins or locks');
+      return true;
+    });
+    // the two big curves with handles
+    const big = document.createElement('div');
+    big.className = 'studio-row two';
+    for (const ax of ['lat', 'lon']) {
+      const sec = document.createElement('section');
+      sec.className = 'studio-card';
+      sec.innerHTML = `<h3>${ax === 'lat' ? 'Cornering' : 'Traction and braking'} <span>drag the dots</span></h3>`;
+      sec.appendChild(cardChart(() => {
+        const r = FEEL.editor(ax, flat, S.flatPacejka(st.orig.pacejka), presetCoeff(), pset);
+        r.opts = { ...r.opts, small: false, h: 270 };
+        r.note = ax === 'lat' ? 'Blue: grip and where it peaks. Green: turn-in. Amber: what is left after the limit. Thin lines: light / heavy wheel load. Dashed: original.'
+          : 'Blue: traction / braking grip and the slip where it peaks. Green: how fast it bites. Amber: grip left when the wheel spins or locks.';
+        return r;
+      }));
+      big.appendChild(sec);
+    }
+    box.appendChild(big);
+    // every group: what it means, its graph, its numbers as sliders you can type into
+    const groups = [['Reference', 'Load', 'How grip scales as weight moves between wheels. Nominal load is the wheel load the curves are measured at; keep it near the real one.']]
+      .concat(Object.keys(pj.groups).map(g => [g, g.replace(/([a-z])([A-Z])/g, '$1 $2'), C.GROUP_INFO[g] || '']));
+    const grid = document.createElement('div');
+    grid.className = 'studio-row grid';
+    for (const [g, title, info] of groups) {
+      const sec = document.createElement('section');
+      sec.className = 'studio-card';
+      sec.innerHTML = `<h3>${title}</h3><p class="studio-info">${info}</p>`;
+      sec.appendChild(cardChart(() => { const r = C.pacGraph(g, flat(), S.flatPacejka(st.orig.pacejka), presetCoeff()); if (r) { r.opts = { ...r.opts, h: 200 }; } return r; }));
+      const keys = g === 'Reference' ? ['NominalLoad', 'NominalRadius'] : Object.keys(pj.groups[g].fields);
+      const main = document.createElement('div');
+      main.className = 'studio-ctls';
+      const more = document.createElement('details');
+      more.className = 'more-numbers';
+      const IMPORTANT = new Set(['NominalLoad', 'NominalRadius', 'PCX1', 'PDX1', 'PDX2', 'PEX1', 'PKX1', 'PCY1', 'PDY1', 'PDY2', 'PEY1', 'PKY1', 'PKY2', 'RBX1', 'RCX1', 'RBY1', 'RCY1', 'QBZ1', 'QCZ1', 'QDZ1', 'QEZ1']);
+      let hidden = 0;
+      for (const k of keys) {
+        const path = g === 'Reference' ? ['pacejka', k] : ['pacejka', 'groups', g, k];
+        const meta = C.PAC_META[k] || [k, ''];
+        const o = getPath(st.orig, path);
+        const [lo, hi, step] = C.rangeFor(k, typeof o === 'number' ? o : 0);
+        const f = g === 'Reference' ? pj.top[k] : pj.groups[g].fields[k];
+        const ctl = control(path, [k, `${meta[0]} <span class="code">${k}</span>`, k === 'NominalLoad' ? 'N' : k === 'NominalRadius' ? 'm' : '', lo, hi, step, meta[1]], { text: srcLabel(f && f.src), title: f && f.src });
+        if (IMPORTANT.has(k)) main.appendChild(ctl); else { more.appendChild(ctl); hidden++; }
+      }
+      sec.appendChild(main);
+      if (hidden) { more.insertAdjacentHTML('afterbegin', `<summary>${hidden} finer terms (load, camber and shift effects)</summary>`); sec.appendChild(more); }
+      grid.appendChild(sec);
+    }
+    box.appendChild(grid);
+    queueCards();
   }
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -715,10 +1174,12 @@
     ['chassis', 'axles', 'tyre', 'fun'].forEach(t => $('tab-' + t).hidden = t !== b.dataset.tab);
   }));
   document.querySelectorAll('#view-tabs button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+  $('tirelab-close').addEventListener('click', () => openOriginalTireLab(false));
   document.querySelectorAll('#scenario button').forEach(b => b.addEventListener('click', () => {
     st.scenario = b.dataset.s;
     document.querySelectorAll('#scenario button').forEach(x => x.setAttribute('aria-checked', x === b));
     $('lbl-radius').style.visibility = st.scenario === 'corner' ? 'visible' : 'hidden';
+    $('bend-dir').style.visibility = st.scenario === 'corner' ? 'visible' : 'hidden';
     stage.t = 0;
     recalc(false);
   }));
@@ -728,6 +1189,20 @@
     i.addEventListener('input', () => { upd(); clearTimeout(st.recalcTimer); st.recalcTimer = setTimeout(() => recalc(false), 60); });
     upd();
   };
+  document.querySelectorAll('#bend-dir button').forEach(b => b.addEventListener('click', () => {
+    st.dir = +b.dataset.d;
+    document.querySelectorAll('#bend-dir button').forEach(x => x.setAttribute('aria-checked', x === b));
+    recalc(false);
+  }));
+  // view camera: follow the car or watch it from a fixed point, zoom and pan
+  document.querySelectorAll('[data-cam]').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('[data-cam]').forEach(x => x.setAttribute('aria-checked', x === b));
+    stage.setFollow(b.dataset.cam === 'follow');
+  }));
+  $('zoom-in').addEventListener('click', () => stage.zoomBy(1.3));
+  $('zoom-out').addEventListener('click', () => stage.zoomBy(1 / 1.3));
+  $('zoom-fit').addEventListener('click', () => stage.fit());
+  stage.onCamera = s => { $('zoom-read').textContent = Math.round(s.zoom * 100) + '%'; };
   slider('in-speed', 'out-speed', 'speed', 'km/h');
   slider('in-radius', 'out-radius', 'radius', 'm');
   st.playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;

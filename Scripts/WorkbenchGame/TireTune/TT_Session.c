@@ -23,9 +23,10 @@ class TT_Session
 	void Presets(notnull array<string> list)
 	{
 		m_aFound.Clear();
-		array<string> ext = {"conf"};
-		array<string> words = {"Pacejka"};
-		Workbench.SearchResources(m_aFound.Insert, ext, words);
+		SearchResourcesFilter filter = new SearchResourcesFilter();
+		filter.fileExtensions = {"conf"};
+		filter.searchStr = {"Pacejka"};
+		ResourceDatabase.SearchResources(filter, m_aFound.Insert);
 		foreach (ResourceName rn : m_aFound)
 		{
 			string path = rn.GetPath();

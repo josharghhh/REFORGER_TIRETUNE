@@ -4,7 +4,7 @@ Started by the Workbench plugin:
     python serve.py --session <tool>/ui/state/session.json --app
 
 Without Workbench (development, or a quick look at a stock vehicle):
-    python serve.py --dev-dump E:/DUMP-FORAI/1.9exp/data --dev-addon <your addon> --prefab Prefabs/.../Car.et
+    python serve.py --dev-dump <unpacked game data> --dev-addon <your addon> --prefab Prefabs/.../Car.et
 
 The plugin writes session.json (the prefab, the creator's writable addons, the texts of read-only parents and
 configs it read through Workbench, and Workbench-resolved values to cross-check). Edits are written straight into
@@ -37,6 +37,9 @@ import difflib  # noqa: E402
 
 STATIC = HERE / 'static'
 STATE = HERE / 'state'
+# backups must live OUTSIDE every addon: Workbench scans all folders of a loaded addon and would register backup
+# .et/.conf copies as duplicate resources (same GUIDs)
+BACKUPS = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'TireTune' / 'backups'
 PRESET_PATHS = [
     'Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_base.conf',
     'Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_Car_80s.conf',
@@ -186,13 +189,32 @@ class App:
             if self.desc:
                 geo = self.geometry()
                 wb = self.session.get('wb') or {}
+                from tt.model import AXLE_FIELDS
+                for key, names in self.engine_fields().items():
+                    ai, obj = int(key.split('.')[0][4:]), key.split('.')[1]
+                    if ai >= len(self.desc['axles']) or obj not in AXLE_FIELDS or obj not in self.desc['axles'][ai]:
+                        continue
+                    fields = self.desc['axles'][ai][obj]['fields']
+                    res = self.vehicle.axles[ai].slots.get(obj)
+                    for n in sorted(names - set(AXLE_FIELDS[obj])):
+                        if n not in fields and isinstance(wb.get(f'{key}.{n}'), (int, float)):
+                            fields[n] = {'value': res.num(n) if res else None, 'src': res.src.get(n, '') if res else '', 'engine': True}
                 out.update({'vehicle': self.desc, 'geometry': geo, 'presets': self.presets(),
                             'lint': lintmod.checks(self.desc, geo), 'wbMismatch': annotate_wb(self.desc, wb),
                             'targetAddon': self.target_root()})
             return out
 
+    def engine_fields(self) -> dict:
+        """Numeric fields the running engine reported per object (session wb keys like axle0.Wheel.ABS_Slip_Threshold)."""
+        out: dict = {}
+        for k in (self.session.get('wb') or {}):
+            parts = k.split('.')
+            if len(parts) == 3 and parts[0].startswith('axle'):
+                out.setdefault(f'{parts[0]}.{parts[1]}', set()).add(parts[2])
+        return out
+
     def plan(self, edits: dict):
-        w = plan_apply(self.ws, self.vehicle, edits, self.target_root())
+        w = plan_apply(self.ws, self.vehicle, edits, self.target_root(), self.engine_fields())
         files = []
         for path, text in w.texts.items():
             old = '' if path in w.created else (self.ws.load(path) or '')
@@ -293,7 +315,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, APP.payload())
         if url.path == '/api/stamp':
             APP.maybe_reload()
-            return self._send(200, {'stamp': APP.stamp})
+            return self._send(200, {'stamp': APP.stamp, 'session': str(APP.session_path.resolve()),
+                                    'dev': bool(APP.args.dev_dump or APP.args.dev_addon)})
         if url.path == '/api/live':
             try:
                 return self._send(200, netapi.call('TT_NetApi', {'op': 'telemetry', 'prefab': APP.desc['prefab'] if APP.desc else ''},
@@ -323,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                     w, files = APP.plan(body.get('edits') or {})
                     if not files:
                         return self._send(200, {'files': [], 'message': 'Nothing changed.'})
-                    res = commit(APP.ws, w, APP.target_root(), str(STATE / 'backups'))
+                    res = commit(APP.ws, w, APP.target_root(), str(BACKUPS))
                     res['reimport'] = APP.reimport(res['changed'], res['created'])
                     APP.reload()
                 return self._send(200, res)
@@ -360,20 +383,25 @@ def list_vehicles(app: App) -> list[dict]:
                     head = fh.readline()
             except OSError:
                 continue
-            if head.startswith('Vehicle'):
+            if head.lstrip('\ufeff').startswith('Vehicle'):     # Workbench may save with a UTF-8 BOM
                 out.append({'addon': a.get('id'), 'path': p.relative_to(root).as_posix()})
             if len(out) > 400:
                 return out
     return out
 
 
-def is_tiretune(port: int) -> bool:
+def same_tiretune(port: int, session: Path, dev: bool) -> bool:
+    """True when the server on `port` is TireTune serving this same session (so it can simply be reused). A dev
+    server or one serving another session is never reused: the plugin's vehicle would not be the one shown."""
     import urllib.request
     try:
         with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/stamp', timeout=1.5) as r:
-            return 'stamp' in json.loads(r.read() or b'{}')
+            info = json.loads(r.read() or b'{}')
     except (OSError, ValueError):
         return False
+    if 'stamp' not in info or dev or info.get('dev'):
+        return False
+    return Path(info.get('session', '')).resolve() == session.resolve()
 
 
 def open_window(url: str) -> None:
@@ -395,13 +423,15 @@ def main():
     global APP
     ap = argparse.ArgumentParser()
     ap.add_argument('--session')
-    ap.add_argument('--port', type=int, default=8790)
+    ap.add_argument('--port', type=int, default=0, help='default 8790 (8795 in dev mode)')
     ap.add_argument('--wb-port', type=int, default=5775)
     ap.add_argument('--app', action='store_true', help='open an app window')
     ap.add_argument('--dev-dump', help='unpacked game data root (read-only parents and configs)')
     ap.add_argument('--dev-addon', action='append', help='a writable addon folder (repeatable)')
     ap.add_argument('--prefab', help='prefab path to open in dev mode')
     args = ap.parse_args()
+    if not args.port:
+        args.port = 8795 if (args.dev_dump or args.dev_addon) else 8790
     APP = App(args)
     # One TireTune server per machine. Windows lets two sockets share a port when SO_REUSEADDR is set, so bind
     # exclusively; a busy port is reused only when it answers as TireTune (it picks up the new session.json itself).
@@ -412,7 +442,7 @@ def main():
             httpd = ThreadingHTTPServer(('127.0.0.1', port), Handler)
             break
         except OSError:
-            if is_tiretune(port):
+            if same_tiretune(port, APP.session_path, bool(args.dev_dump or args.dev_addon)):
                 if args.app:
                     open_window(f'http://127.0.0.1:{port}/')
                 print(f'[TireTune] already running on {port}')

@@ -5,7 +5,7 @@ Resolution rules (text side; the Workbench plugin's BaseContainer dump is the au
 - A prefab or config starts from its ancestor (`: "{GUID}path"`), then applies its own values.
 - Array items (`Axle "{id}"`, `RigidBody "{id}"`) merge with the inherited item of the same id.
 - An object property (`Tyre Tyre "{id}" ...`) merges with the inherited object under the same key and id. If it
-  re-points to another config (S105_rally does this for Tyre), it starts from that config instead.
+  re-points to another config, it starts from that config instead.
 """
 from __future__ import annotations
 
@@ -21,14 +21,14 @@ from typing import Callable
 from .enftext import Doc, Node, Patcher, ParseError, fmt_value, ref_guid, ref_path, unquote
 
 # Tunable fields per object, in the order the UI shows them. Names are the exact Enfusion property names
-# (verified against 1.9 stock configs: Prefabs/Vehicles/Core/Configs and Wheeled/*/Configs).
+# (the property names the 1.9 vehicle configs use).
 AXLE_FIELDS = {
     'Suspension': ['MaxSteeringAngle', 'SpringRate', 'CompressionDamper', 'RelaxationDamper', 'MaxTravelUp',
                    'MaxTravelDown', 'RayStartOffsetUp'],
-    'Wheel': ['Radius', 'Mass', 'Ratio', 'BrakeTorque', 'HandbrakeTorqueFactor'],
+    'Wheel': ['Radius', 'Mass', 'Ratio', 'BrakeTorque', 'HandbrakeTorqueFactor', 'ABS_Slip_Threshold', 'ABS_Minimum_RPM'],
     'Tyre': ['Roughness', 'LongitudinalFriction', 'LateralFriction', 'RollingResistance', 'RollingDrag', 'Tread'],
     'Steering': ['SteeringRatio', 'PowerSteeringFactor', 'SteeringDamping', 'MechanicalTrail', 'ScrubRadius'],
-    'Swaybar': ['Stiffness'],          # axle object (LAV25); only edited when the axle already has one
+    'Swaybar': ['Stiffness'],          # axle object; only edited when the axle already has one
 }
 AXLE_PROPS = ['TorqueShare', 'HasHandbrake']
 PACEJKA_GROUPS = {   # slot key -> class (Pacejka2002); ids are read from the resolved model, not assumed
@@ -39,6 +39,14 @@ PACEJKA_GROUPS = {   # slot key -> class (Pacejka2002); ids are read from the re
     'Aligning': 'Pacejka2002Aligning',
 }
 PACEJKA_TOP = ['NominalLoad', 'NominalRadius']
+
+# Stock 1.9 Pacejka2002 tyre models offered when a vehicle has none yet (pre-1.9 vehicles only carry the legacy
+# `Pacejka Pacejka : PacejkaTire_*.conf`). GUIDs from the 1.9 game data; picked by mass like BI's own vehicles.
+TYRE_PRESETS = [
+    ('Car_80s', '{879967DF1DA9E0D2}Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_Car_80s.conf', 0),
+    ('MilitaryVehicle_80s', '{FEB0A9D4EBF18E95}Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_MilitaryVehicle_80s.conf', 2500),
+    ('Truck_80s', '{3A2522678B881097}Prefabs/Vehicles/Core/Configs/Pacejka/Pacejka2002_Truck_80s.conf', 6000),
+]
 
 
 # ------------------------------------------------------------------------------------------------------------------
@@ -266,7 +274,13 @@ def describe(v: Vehicle, ws: Workspace) -> dict:
     for i, a in enumerate(v.axles):
         ax = {'id': a.name, 'index': i, 'props': fields(a, AXLE_PROPS), 'wheels': []}
         for wp in a.arrays.get('WheelPositions', []):
-            ax['wheels'].append({'name': wp.name, 'pivot': unquote((wp.props.get('PivotID') or [''])[0])})
+            ax['wheels'].append({'name': wp.name, 'pivot': unquote((wp.props.get('PivotID') or [''])[0]),
+                                 'angles': wp.num('Angles') if isinstance(wp.num('Angles'), list) else None,
+                                 'src': wp.src.get('Angles', '')})
+        ax['kingpins'] = [{'id': kp.name, 'pivot': unquote((kp.props.get('PivotID') or [''])[0]),
+                           'angles': kp.num('Angles') if isinstance(kp.num('Angles'), list) else None, 'src': kp.src.get('Angles', '')}
+                          for kp in a.arrays.get('KingpinAxes', [])]
+        ax['mirror'] = a.num('MirrorWheelPosition')
         for k, names in AXLE_FIELDS.items():
             o = a.slots.get(k)
             ax[k] = {'present': o is not None, 'conf': ref_path(o.anc) if o and o.anc else '',
@@ -292,6 +306,8 @@ def describe(v: Vehicle, ws: Workspace) -> dict:
         'aero': fields(v.sim.slots.get('Aerodynamics') if v.sim else None, ['ReferenceArea', 'DragCoefficient']),
         'axles': axles,
         'pacejka': pac,
+        'legacyPacejka': ref_path(v.sim.slots['Pacejka'].anc) if v.sim and 'Pacejka' in v.sim.slots and v.sim.slots['Pacejka'].anc else '',
+        'tyrePresets': [{'name': n, 'ref': r, 'fromMass': m} for n, r, m in TYRE_PRESETS],
         'missing': sorted(v.resolver.missing),
     }
 
@@ -441,7 +457,13 @@ def _changed(current, new) -> bool:
         return str(current) != str(new)
 
 
-def plan_apply(ws: Workspace, v: Vehicle, edits: dict, target_addon_root: str = '') -> Writer:
+def _item_step(obj: RObj, container: str) -> Step:
+    # array items keep their own header: `WheelPosition Wheel_L01` (bare name) or `AxisPosition "{id}"`
+    return Step('item', container, obj.header or (f'{obj.cls} "{obj.name}"' if obj.name.startswith('{') else f'{obj.cls} {obj.name}'),
+                obj.cls, obj.name, '')
+
+
+def plan_apply(ws: Workspace, v: Vehicle, edits: dict, target_addon_root: str = '', engine_fields: dict | None = None) -> Writer:
     """Turn UI edits into text edits. Only values that differ from the resolved vehicle are written.
 
     edits = {rigidBody: {Mass, CenterOfMass}, sim: {...}, axles: [{TorqueShare, Suspension: {...}, ...}],
@@ -474,9 +496,29 @@ def plan_apply(ws: Workspace, v: Vehicle, edits: dict, target_addon_root: str = 
             obj = a.slots.get(key)
             if obj is None or not ae.get(key):
                 continue
-            ch = {k: val for k, val in ae[key].items() if k in AXLE_FIELDS[key] and _changed(obj.num(k), val)}
+            # curated fields, plus fields the running engine reported for this object (session "wb")
+            allowed = set(AXLE_FIELDS[key]) | set((engine_fields or {}).get(f'axle{i}.{key}', ()))
+            ch = {k: val for k, val in ae[key].items() if k in allowed and _changed(obj.num(k), val)}
             if ch:
                 w.set(et, _steps_axle(v, i) + [_slot_step(obj, key)], ch)
+        # alignment: wheel hub angles (camber / toe) and kingpin axis angles (caster / SAI)
+        al = ae.get('align') or {}
+        for name, ang in (al.get('wheels') or {}).items():
+            wp = a.item('WheelPositions', 'WheelPosition', name)
+            if wp is not None and isinstance(ang, list) and len(ang) == 3 and _changed(wp.num('Angles'), ang):
+                w.set(et, _steps_axle(v, i) + [_item_step(wp, 'WheelPositions')], {'Angles': ang})
+        for kid, ang in (al.get('kingpins') or {}).items():
+            kp = a.item('KingpinAxes', 'AxisPosition', kid)
+            if kp is not None and isinstance(ang, list) and len(ang) == 3 and _changed(kp.num('Angles'), ang):
+                w.set(et, _steps_axle(v, i) + [_item_step(kp, 'KingpinAxes')], {'Angles': ang})
+
+    add = edits.get('addTyreModel')
+    if add and v.tyre_model is None:
+        if not any(add == r for _, r, _ in TYRE_PRESETS):
+            raise VehicleError(f'unknown tyre model preset {add}')
+        oid = '%016X' % random.getrandbits(64)
+        w.ensure(et, _steps_sim(v) + [Step('slot', '', f'TyreModel Pacejka2002 "{{{oid}}}" : "{add}"', 'Pacejka2002', '{' + oid + '}', 'TyreModel')])
+        w.log.append(f'{et}: added 1.9 TyreModel Pacejka2002 from {ref_path(add)}')
 
     pe = edits.get('pacejka') or {}
     if pe and v.tyre_model is not None:

@@ -179,10 +179,14 @@ class Doc:
         base = 0
         for li, raw in enumerate(text.split('\n')):
             for m in _TOKEN.finditer(raw):
-                tx = m.group(0)
+                tx, start = m.group(0), m.start()
+                if tx.startswith('\ufeff'):    # UTF-8 BOM before the first token: not part of the class name
+                    tx, start = tx[1:], start + 1
+                    if not tx:
+                        continue
                 if tx.startswith('//'):     # comment to end of line (never inside a quoted token)
                     break
-                out.append(Tok(tx, base + m.start(), base + m.end(), li))
+                out.append(Tok(tx, base + start, base + m.end(), li))
             base += len(raw) + 1
         return out
 

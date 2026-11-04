@@ -120,6 +120,56 @@
     await wait(300);
   }
 
+  // drag a graph handle (found by its label) by dx, dy screen pixels, the cursor riding the dot
+  async function dragHandle(scope, labelStart, dx, dy, ms = 1500) {
+    const box = $(scope);
+    if (!box) return;
+    const h = [...box.querySelectorAll('.ch-handle')].find(n => n.querySelector('text').textContent.startsWith(labelStart));
+    if (!h) return;
+    const svg = h.closest('svg');
+    await reveal(svg);
+    spotlight(svg.closest('.card-chart') || svg);
+    const dot = h.querySelector('.dot').getBoundingClientRect();
+    const x0 = dot.left + dot.width / 2, y0 = dot.top + dot.height / 2;
+    await moveTo(x0, y0);
+    await press();
+    const ev = (t, x, y, el) => el.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: x, clientY: y, pointerId: 77, button: 0, buttons: 1, pointerType: 'mouse' }));
+    ev('pointerdown', x0, y0, h);
+    const steps = Math.max(12, Math.round(ms / 33));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps, e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const x = x0 + dx * e, y = y0 + dy * e;
+      ev('pointermove', x, y, svg);
+      cursor.style.transitionDuration = '0ms';
+      cursor.style.transform = `translate(${x}px, ${y}px)`;
+      cx = x; cy = y;
+      await wait(ms / steps);
+    }
+    ev('pointerup', x0 + dx, y0 + dy, svg);
+    await wait(400);
+  }
+
+  // drag a handle on the 3D corner rig (rig3d.js) by dx, dy pixels, the cursor riding it
+  async function dragRig(id, dx, dy, ms = 1400) {
+    const at = globalThis.TireTuneRig && TireTuneRig.handleAt(id);
+    const cv = $('.rig-host canvas');
+    if (!at || !cv) return;
+    spotlight($('.rig-card'), 2);
+    await moveTo(at[0], at[1]);
+    await press();
+    const ev = (t, x, y) => cv.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: x, clientY: y, pointerId: 78, button: 0, buttons: 1, pointerType: 'mouse' }));
+    ev('pointerdown', at[0], at[1]);
+    const steps = Math.max(12, Math.round(ms / 33));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps, e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2, x = at[0] + dx * e, y = at[1] + dy * e;
+      ev('pointermove', x, y);
+      cursor.style.transitionDuration = '0ms'; cursor.style.transform = `translate(${x}px, ${y}px)`; cx = x; cy = y;
+      await wait(ms / steps);
+    }
+    ev('pointerup', at[0] + dx, at[1] + dy);
+    await wait(500);
+  }
+
   async function choose(sel, value) {
     const el = $(sel);
     if (!el) return;
@@ -162,23 +212,52 @@
         run: async () => { await click('[data-tab=chassis]'); if (com) await drag('#c_rigidBody_CenterOfMass_2', comTo, 2200); } },
       { title: 'See the effect', text: 'Readouts show the change against the original in green or red, and the axle cards show the new static loads, sag and ride frequency.',
         run: async () => { spotlight($('#axle-metrics')); await moveTo(rectOf($('#axle-metrics')).cx, rectOf($('#axle-metrics')).y + 40); } },
-      { title: 'Per-axle setup', text: 'Suspension, wheel, tyre and steering for each axle. Stiffen the rear springs and watch the sag, ride frequency and roll split update.',
+      { title: 'Per-axle setup', text: 'Every part has a graph you can grab. Drag the spring dot to stiffen the rear springs and watch sag, ride frequency and roll split follow.',
         run: async () => {
           await click('[data-tab=axles]');
           if (axleCount > 1) await click('#tab-axles .axle-seg button:nth-child(2)');
-          const s = $('#tab-axles input[id$="_Suspension_SpringRate"]');
-          if (s) await drag('#' + s.id, Math.min(+s.max, +s.value * 1.6), 1800);
+          await dragHandle('#tab-axles', '' + Math.round(+($('#tab-axles input[id$="_Suspension_SpringRate"]') || { value: 0 }).value), 0, -40, 1800);
         } },
-      { title: 'Tyre model', text: 'The shared Pacejka2002 model with plain-language labels. Compare against a stock BI tyre: its curves appear dotted on the charts.',
-        run: async () => { await click('[data-tab=tyre]'); if (preset) await choose('#preset-sel', preset); spotlight($('.charts'), 4); await moveTo(rectOf($('#chart-lat')).cx, rectOf($('#chart-lat')).cy); } },
-      { title: 'More grip', text: 'Raise peak lateral grip: the cornering curves grow past the dashed original, and the grip limit on the bend goes up.',
-        run: async () => { const p = $('#c_pacejka_groups_Lateral_PDY1'); if (p) await drag('#c_pacejka_groups_Lateral_PDY1', Math.min(+p.max, +p.value + 0.2), 1800); } },
+      { title: 'Tyre feel', text: 'The shared Pacejka tyre in plain words: grip, turn-in and breakaway. Compare against a stock BI tyre; its curve shows dotted.',
+        run: async () => { await click('[data-tab=tyre]'); if (preset) await choose('#preset-sel', preset); spotlight($('#tab-tyre .feel-tiles')); await moveTo(rectOf($('#tab-tyre .feel-tiles')).cx, rectOf($('#tab-tyre .feel-tiles')).cy); } },
+      { title: 'Shape the tyre by hand', text: 'Grab the dots on the curve: blue lifts the grip, green sharpens turn-in, amber sets how hard it lets go. The words above update as you drag.',
+        run: async () => {
+          await dragHandle('#tab-tyre .feel-editor', 'grip', 0, -26, 1600);
+          await dragHandle('#tab-tyre .feel-editor', 'turn-in', 0, -22, 1300);
+          spotlight($('#tab-tyre .feel-tiles')); await moveTo(rectOf($('#tab-tyre .feel-tiles')).cx, rectOf($('#tab-tyre .feel-tiles')).cy);
+        } },
       { title: 'Braking', text: 'Full brakes from speed: wheels that brake harder than the tyre can hold turn red and lock, and the nose dives in the side view.',
         run: async () => { await click('[data-s=brake]'); await drag('#in-speed', 90, 1300); spotlight($('.stage-wrap'), 4); } },
       { title: 'Launch and corner', text: 'Launch shows traction on the driven axles; Corner holds a speed on a bend and shows understeer or oversteer as it builds.',
         run: async () => { await click('[data-s=launch]', { after: 1600 }); await click('[data-s=corner]'); await drag('#in-speed', 60, 900); } },
-      { title: 'Tire Lab', text: 'The original Tire Lab tool, loaded with this vehicle: 3D tyre, suspension rig and the full force response. Its edits flow back into TireTune.',
-        run: async () => { await click('[data-view=tirelab]', { after: 2600 }); await click('[data-view=vehicle]', { spot: false }); } },
+      { title: 'Tyre Studio', text: 'A live suspension corner: drag the wheel through its travel, steer it, tilt it. Then the tyre itself in plain words, with curves to grab and every number a slider you can type into.',
+        run: async () => {
+          await click('[data-view="tirelab"]', { after: 1800 });
+          await dragRig('travel', 0, -30, 1300);
+          await dragRig('steer', -45, 0, 1300);
+          await dragRig('camber', -8, 0, 1100);
+          const tiles = $('#studio .studio-tiles');
+          if (tiles) { tiles.scrollIntoView({ block: 'center' }); await wait(500); spotlight(tiles, 4); await moveTo(rectOf(tiles).cx, rectOf(tiles).cy, 900); }
+          await dragHandle('#studio', 'breakaway', 0, 18, 1300);
+          await wait(800);
+          await click('[data-view="vehicle"]', { spot: false });
+        } },
+      { title: '3D car', text: 'Your vehicle in 3D, built from its real wheel, spring and centre-of-mass values. Orbit, zoom, hover any part for its numbers and click it to adjust it right there.',
+        run: async () => {
+          await click('[data-view="3d"]', { after: 1200 });
+          const rot = $('#c3-rotate'); if (rot && rot.getAttribute('aria-pressed') !== 'true') await click('#c3-rotate', { after: 1600 });
+          spotlight($('#car3d'), 2); await moveTo(rectOf($('#car3d')).cx, rectOf($('#car3d')).cy + 60, 900);
+          await press();
+          if (globalThis.TireTune3D) TireTune3D.select({ kind: 'spring', label: 'Axle 1 suspension', axle: 0, side: 1 });
+          await wait(600); raise();
+          const ins = $('#inspector'); if (ins && !ins.hidden) { spotlight(ins, 2); await moveTo(rectOf(ins).cx, rectOf(ins).y + 140); }
+          const sp = $('#inspector input[id$="_Suspension_SpringRate"]');
+          if (sp) { sp.id = sp.id + '_3d'; await drag('#' + sp.id, Math.min(+sp.max, +sp.value * 1.5), 1600); }
+          await wait(1200);
+          if (rot && rot.getAttribute('aria-pressed') === 'true') rot.click();
+          if (globalThis.TireTune3D) TireTune3D.select(null);
+          await click('[data-view="vehicle"]', { spot: false });
+        } },
       { title: 'Review before writing', text: 'Review shows the exact text change for every file. Nothing is written until you press Write files (this demo never does).',
         run: async () => { await click('#btn-review', { after: 900 }); raise(); const d = $('#review'); if (d && d.open) { spotlight($('#review-files'), 4); await moveTo(rectOf($('#review-files')).cx, rectOf($('#review-files')).y + 60); } } },
       { title: 'Into Workbench', text: 'Write files backs up, edits your .et and configs as plain text, and Workbench reimports them. Reopen the world and drive.',

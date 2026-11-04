@@ -1,0 +1,15 @@
+# local runtime state: sessions (they embed vanilla game text), geometry, backups, queues
+ui/state/
+__pycache__/
+*.pyc
+# Workbench caches and local test content
+resourceDatabase.rdb
+test.ent
+test.ent.meta
+test_Layers/
+Prefabs/
+REFORGER_TIRETUNE/
+# internal notes, code tour and dev tests: not part of the release
+docs/
+.tours/
+ui/tests/

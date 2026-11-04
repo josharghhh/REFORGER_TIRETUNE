@@ -1,7 +1,7 @@
 """Chassis sanity checks on a described vehicle (model.describe output, with the UI's edits applied).
 
 Values in Enfusion configs are engine units. The estimates here assume SpringRate in N/mm and dampers in N s/m,
-which gives plausible numbers on every stock 1.9 vehicle (M151A2 front: about 1.9 Hz, damping ratio 0.23), but
+which gives plausible numbers for ordinary road and military vehicles (about 1-2.5 Hz, damping ratio 0.2-0.5), but
 they are estimates to compare setups against each other, not engine truth.
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ def checks(desc: dict, geo: dict) -> list[dict]:
         tyre = {k: _v(f) for k, f in a['Tyre']['fields'].items()}
         if not a['Tyre']['conf'] and all(v is None for v in tyre.values()):
             add('warn', i, f'{name}: Tyre uses engine defaults',
-                'This axle\'s Tyre has no config and no values (stock Ural4320 axle 3 does this). '
+                'This axle\'s Tyre has no config and no values. '
                 'Point it at the same Tyre config as the other axles unless the defaults are intended.')
         susp = {k: _v(f) for k, f in a['Suspension']['fields'].items()}
         wheel = {k: _v(f) for k, f in a['Wheel']['fields'].items()}

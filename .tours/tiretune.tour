@@ -1,0 +1,234 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "TireTune Workbench: how it fits together",
+  "description": "Follow one tuning session end to end: the Workbench button, the session file, the text engine, the animated preview, and Apply writing your .et back. Open the TireTune_Workbench folder as the VS Code workspace.",
+  "isPrimary": true,
+  "steps": [
+    {
+      "title": "Welcome",
+      "description": "## TireTune Workbench\n\nTunes the **1.9 Pacejka2002** tyre model and the chassis of a wheeled vehicle prefab, with a live animated preview, then writes the result back into your `.et` / `.conf` as minimal text edits.\n\nThree parts:\n\n1. **Workbench plugin** (Enforce Script, `Scripts/WorkbenchGame/TireTune/`): picks the vehicle, exports a session, reimports results.\n2. **Local server** (Python 3.11+, standard library only, `ui/serve.py` + `ui/tt/`): parses, resolves and patches Enfusion text.\n3. **UI** (vanilla HTML/JS/SVG, `ui/static/`): controls, simulation, vehicle stage, charts, and the friend's original Tire Lab.\n\n> Needs **Arma Reforger Experimental Tools** until 1.9 is released: 1.8 has no Pacejka2002."
+    },
+    {
+      "file": "README.md",
+      "pattern": "^## Use",
+      "title": "What the user does",
+      "description": "The user-facing flow in five steps. Keep this in mind for the rest of the tour: **select .et -> Open selected vehicle -> tune in the window -> Review & apply -> reopen the world**."
+    },
+    {
+      "file": "addon.gproj",
+      "line": 1,
+      "title": "The addon",
+      "description": "A plain game project that only depends on Arma Reforger. The friend loads it alongside their own mod; nothing here is shipped in a game mod."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Plugin.c",
+      "pattern": "^\\[WorkbenchPluginAttribute",
+      "title": "The Resource Manager plugin",
+      "description": "Registers **Plugins > TireTune** and a right-click entry on `.et` files (`resourceTypes: {\"et\"}`). Same launcher pattern as our Enfusion-Actions addon (`EA_UiPlugin`)."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Plugin.c",
+      "pattern": "void DoOpen\\(\\)",
+      "title": "Open selected vehicle",
+      "description": "Uses the Resource Browser selection first, then the `m_Vehicle` prefab picked in the plugin settings, so a creator can always choose their own `.et`."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Plugin.c",
+      "pattern": "protected void OpenVehicle\\(",
+      "title": "Session, then UI",
+      "description": "Writes `ui/state/session.json` through `TT_Session`, logs `[TireTune] session ... N file(s), M unreadable`, then starts the UI. A UI that is already running notices the new session by itself (it polls `/api/stamp`)."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Session.c",
+      "pattern": "bool Write\\(ResourceName prefab",
+      "title": "What goes into the session",
+      "description": "* `prefab`, and the creator's **writable addons** (not vanilla, not packed).\n* `files`: the prefab, its parent chain and every `.conf` they reference. Packed files are embedded as **text**; files in the creator's addons are listed by absolute path only.\n* `presets`: stock tyre models to compare against.\n* `wb`: values resolved by **Workbench itself** (BaseContainer API, inheritance and engine defaults applied)."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Session.c",
+      "pattern": "protected ref FileHandle m_File",
+      "title": "Lesson: ref the FileHandle",
+      "description": "First Workbench run crashed here. A plain member is a **weak** reference, so the handle from `FileIO.OpenFile` was freed after one `WriteLine` (`NULL pointer to instance`, session.json held only `{`). Kept handles must be `ref`."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Session.c",
+      "pattern": "void Presets\\(",
+      "title": "Presets are searched, not hard-coded",
+      "description": "`Workbench.SearchResources` finds every `.conf` named *Pacejka* in the loaded build, because paths differ between builds."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Session.c",
+      "pattern": "protected void ScanRefs\\(",
+      "title": "Following references",
+      "description": "Collects `\"{GUID}path.conf\"` references anywhere, but only the root ancestor `.et` of a prefab. Following every `.et` would pull in wheel, glass and slot prefabs that tuning never needs."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Session.c",
+      "pattern": "protected void DumpVars\\(",
+      "title": "Workbench's own answer",
+      "description": "Flattens every scalar/int/bool/vector variable into keys such as `axle0.Tyre.LateralFriction` and `tyre.Lateral.PCY1`. The server compares these with its own text resolution and uses them for values the prefab leaves at **engine defaults**."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Plugin.c",
+      "pattern": "protected void Launch\\(\\)",
+      "title": "Starting the UI",
+      "description": "Finds Python 3.11+ (setting, `python`, `py -3`, `python3`) and runs `serve.py --app --port 8790 --session ...`. Port **8790** because 8766 belongs to the iClone MCP server on this machine."
+    },
+    {
+      "file": "ui/serve.py",
+      "pattern": "^class App:",
+      "title": "The server",
+      "description": "Loads the session into a `Workspace`, resolves the vehicle, and serves the API: `/api/session`, `/preview`, `/apply`, `/geometry`, `/capture`, `/live`, `/open`, `/vehicles`. It also has a dev mode that runs without Workbench against unpacked game data (`--dev-dump`)."
+    },
+    {
+      "file": "ui/serve.py",
+      "pattern": "^def main\\(",
+      "title": "One server per machine",
+      "description": "Python's HTTPServer sets SO_REUSEADDR, which on Windows lets two servers share a port. We bind **exclusively** and reuse a busy port only when it answers as TireTune (`/api/stamp`)."
+    },
+    {
+      "file": "ui/serve.py",
+      "pattern": "^def annotate_wb\\(",
+      "title": "Text vs Workbench",
+      "description": "Attaches each Workbench value to its field as `wb` (engine defaults for unset fields) and reports any disagreement. In the UI's Workbench panel, **\"Values match Workbench\"** is the sign the resolver below got inheritance right."
+    },
+    {
+      "file": "ui/tt/enftext.py",
+      "line": 1,
+      "title": "The Enfusion text engine",
+      "description": "Parses `.et` / `.conf` as Workbench writes them: one entry per line, single-space indent, `Key Class \"{id}\" : \"{GUID}parent\" {` headers, array containers, value rows. It also handles hand-written one-liners, CRLF and `//` comments.\n\nTested against all **1472** vehicle files in the 1.9 dump."
+    },
+    {
+      "file": "ui/tt/enftext.py",
+      "pattern": "^class Patcher:",
+      "title": "Splice, never re-serialise",
+      "description": "Edits are spliced into the original text (replace a value, insert a line before a closing brace). Everything the tool does not touch keeps its exact bytes, including line endings. That is why the APOC Car06 test shows **exactly 2 changed lines**."
+    },
+    {
+      "file": "ui/tt/model.py",
+      "pattern": "^AXLE_FIELDS = \\{",
+      "title": "What is tunable",
+      "description": "Exact Enfusion property names, verified against the stock 1.9 configs. `Swaybar` is its own axle object (LAV25), not a Suspension property. One **TyreModel** per vehicle is shared by every wheel; front/rear differences live in these per-axle objects."
+    },
+    {
+      "file": "ui/tt/model.py",
+      "pattern": "    def merge\\(",
+      "title": "Resolving inheritance",
+      "description": "Start from the ancestor (`: \"{GUID}path\"`), then apply this node's values. Array items merge by **id** (`Axle \"{4D8B...}\"`); object properties merge by key and id. Re-pointing a config in a child (`Tyre Tyre \"{id}\" : \"new.conf\"`, as S105_rally does) starts from the new config."
+    },
+    {
+      "file": "ui/tt/model.py",
+      "pattern": "^def plan_apply\\(",
+      "title": "Planning an apply",
+      "description": "Only values that **differ** from the resolved vehicle are written; writing unchanged values would freeze inherited ones in the child. Missing override blocks are created with the parent's ids (`Axle \"{id}\" { Tyre Tyre \"{id}\" { ... } }`), the format Workbench writes itself. Vanilla prefabs are refused."
+    },
+    {
+      "file": "ui/tt/model.py",
+      "pattern": "^def _apply_pacejka\\(",
+      "title": "Where tyre-model changes go",
+      "description": "* **conf**: your own Pacejka config, edited in place.\n* **new**: `Configs/Vehicles/TireTune/<Vehicle>_Pacejka2002.conf` that inherits the current one, with `TyreModel` re-pointed to it.\n* **inline**: overrides inside the prefab.\n\n`auto` picks *conf* if you own it, else *new*."
+    },
+    {
+      "file": "ui/tt/model.py",
+      "pattern": "^def commit\\(",
+      "title": "Writing files",
+      "description": "Backs up every changed file **outside the addons** (`ui/state/backups/<stamp>`), so no stray `.et` copies get registered. New configs get their `.meta` with a generated GUID at the same time, so the resource DB never indexes a null GUID."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_Plugin.c",
+      "pattern": "^class TT_Reimport",
+      "title": "Back into Workbench",
+      "description": "Registers new files and rebuilds changed ones, only inside the creator's addons. It runs from the Net API (one click) or from the **Reimport changes** button, using `ui/state/pending.json`. Prefab changes still need a **world reopen**."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_NetApi.c",
+      "pattern": "^class TT_NetApi : NetApiHandler",
+      "title": "Net API: reimport, geometry, telemetry",
+      "description": "APIFunc `TT_NetApi`. `geometry` reads real wheel positions with `WheelGetPosition`; `telemetry` streams contact, compression and slips from the vehicle you drive in Play mode. Both are read-only."
+    },
+    {
+      "file": "Scripts/WorkbenchGame/TireTune/TT_NetApi.c",
+      "pattern": "protected static void Fill\\(",
+      "title": "No load getter, so estimate",
+      "description": "1.9 has no per-wheel load API. Compression is `contactLocal.y + radius - WheelGetPosition(i, 0).y` (hub height above full extension); the UI turns it into load with the spring rate."
+    },
+    {
+      "file": "ui/tt/lint.py",
+      "pattern": "^def checks\\(",
+      "title": "Checks",
+      "description": "Torque shares summing to 1, Tyre objects with no config (stock **Ural4320 axle 3**), sag vs travel, ride frequency, damping ratio, NominalRadius vs wheel radius, NominalLoad vs wheel load. Rollover only runs with captured geometry. Quiet on stock cars by design."
+    },
+    {
+      "file": "ui/static/js/sim.js",
+      "pattern": "function buildCar\\(",
+      "title": "The preview model",
+      "description": "Builds an N-axle car (trucks too) on top of the friend's MF5.2 evaluator (`TireLabPhysics.forces`, `tirelab-core.js`, unmodified). Each axle gets its own coefficients, with the Tyre friction factors scaling the Pacejka peak. That last part is an **assumption**, labelled in the UI."
+    },
+    {
+      "file": "ui/static/js/sim.js",
+      "pattern": "function wheelLoads\\(",
+      "title": "Weight transfer",
+      "description": "Longitudinal transfer `m*ax*h/L`; lateral transfer per axle by roll-stiffness share (`SpringRate * track^2 + Swaybar`). These per-wheel loads drive both the colours and the curves."
+    },
+    {
+      "file": "ui/static/js/sim.js",
+      "pattern": "function corner\\(",
+      "title": "Scenarios",
+      "description": "Corner, a yaw/lateral bicycle model generalised to N axles; Brake (lock-up when brake torque exceeds tyre grip); Launch (grip-limited). Sanity check: the M151A2 corner settles at the analytic yaw rate (0.394 vs 0.397 rad/s)."
+    },
+    {
+      "file": "ui/static/js/vehicle.js",
+      "pattern": "    setScene\\(",
+      "title": "The animated stage",
+      "description": "SVG top and side views. Wheel colour = grip used, friction rings with force arrows, kN loads, springs inside their travel brackets, and a dashed ghost path for the **original** setup. On an edit it keeps the playback phase, so the picture **morphs** instead of restarting. With reduced motion it parks on a representative frame."
+    },
+    {
+      "file": "ui/static/js/charts.js",
+      "pattern": "    mark\\(points\\)",
+      "title": "Live operating point",
+      "description": "Dots ride the force curves in sync with the animation, so you can see *where on the curve* each axle is working, next to the original (dashed) and a stock preset (dotted)."
+    },
+    {
+      "file": "ui/static/js/app.js",
+      "pattern": "  function control\\(path",
+      "title": "One control",
+      "description": "Slider plus number, a source badge (this prefab / config file / engine default), a dirty dot and a reset to the original. Unset fields show the **Workbench engine default** as the placeholder."
+    },
+    {
+      "file": "ui/static/js/app.js",
+      "pattern": "  function recalc\\(",
+      "title": "Every edit",
+      "description": "Debounced 60 ms: rebuild both cars (current + original), rerun the scenario and the ghost, then redraw the charts and readouts."
+    },
+    {
+      "file": "ui/static/js/app.js",
+      "pattern": "  globalThis.TireTuneBridge = \\{",
+      "title": "The friend's Tire Lab",
+      "description": "Their tool already saves state through `window.openai.setWidgetState`. A shim (next step) points that at this bridge: we hand it the vehicle (`initialState`) and pull its edits back (`fromTireLab`), mapping its rig fields onto Enfusion property names."
+    },
+    {
+      "file": "ui/tools/build_tirelab.py",
+      "pattern": "^SHIM = r",
+      "title": "Rebuilding the Tire Lab",
+      "description": "When the friend sends an update, run `python -I ui/tools/build_tirelab.py <their file>`: it keeps the source unmodified in `static/vendor/` and regenerates `tirelab.html` and `tirelab-core.js`."
+    },
+    {
+      "file": "ui/static/js/app.js",
+      "pattern": "  async function review\\(\\)",
+      "title": "Review & apply",
+      "description": "Asks the server for a **unified diff per file**, without writing anything, then writes on confirmation. The toast reports whether Workbench reloaded the files or they were queued for the plugin button."
+    },
+    {
+      "file": "ui/tests/test_model.py",
+      "pattern": "^def test_session\\(",
+      "title": "Tests",
+      "description": "`python -I ui/tests/test_model.py --dump E:/DUMP-FORAI/1.9exp/data --apoc <ARGH_APOC_CARS>` runs 34 checks: parser, the inherited-M151A2 round trip, the session.json contract (this test) and the APOC Car06 two-line edit. None of them need Workbench."
+    },
+    {
+      "file": "docs/HANDOFF.md",
+      "pattern": "^## Validation status",
+      "title": "Where it stands",
+      "description": "What is verified, and the **in-Workbench checklist** still open: compile, session with 0 unreadable files, \"Values match Workbench\", apply + reopen world + drive, Net API geometry/telemetry. Start the next session here."
+    }
+  ]
+}

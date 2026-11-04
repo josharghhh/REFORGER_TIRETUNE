@@ -1,0 +1,8 @@
+GameProject {
+ ID "TireTune_Workbench"
+ GUID "7C3E19A54B2D8F61"
+ TITLE "TireTune Workbench"
+ Dependencies {
+  "58D0FB3206B6F859"
+ }
+}

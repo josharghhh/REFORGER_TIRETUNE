@@ -1,0 +1,80 @@
+Vehicle : "{0ABD8CD4D1F28A33}Prefabs/Vehicles/Wheeled/M151A2/M151A2.et" {
+ ID "5E1A0C7D2B3F4E01"
+ components {
+  RigidBody "{51DAA09FECF52BBF}" {
+   CenterOfMass -0.335 1.305 0.125
+   Mass 3255
+  }
+  VehicleWheeledSimulation "{731B26FCA2F19855}" {
+   Simulation Wheeled "{4D8B26DEA5F25978}" {
+    Axles {
+     Axle "{4D8B26DF957A8E1C}" {
+      Suspension Suspension "{4D8B26DFF8859A7B}" {
+       MaxTravelDown 0.18
+       MaxTravelUp 0.13
+       SpringRate 40
+       RelaxationDamper 1800
+       CompressionDamper 5700
+       MaxSteeringAngle 28
+      }
+      Wheel Wheel "{4D8B26DFFE211745}" {
+       BrakeTorque 2550
+       HandbrakeTorqueFactor 1
+       Mass 12
+       Radius 0.33
+      }
+      Tyre Tyre "{4D8B26DFFD85E58F}" {
+       LateralFriction 0.8
+       RollingResistance 0.014
+       Roughness 0
+       Tread 0.6
+       RollingDrag 0
+       LongitudinalFriction 1
+      }
+      TorqueShare 0
+      Steering Steering "{17744E1869215784}" {
+       ScrubRadius 0.02
+       MechanicalTrail 0.03
+       SteeringDamping 1
+       PowerSteeringFactor 0.1
+       SteeringRatio 8
+      }
+     }
+     Axle "{4D8B26DF8CF2F3D8}" {
+      Suspension Suspension "{4D8B26DFF8859A7B}" {
+       MaxTravelDown 0.18
+       MaxTravelUp 0.13
+       SpringRate 40
+       RelaxationDamper 1800
+       CompressionDamper 5700
+      }
+      Wheel Wheel "{4D8B26DFFE211745}" {
+       BrakeTorque 2550
+       HandbrakeTorqueFactor 1
+       Mass 12
+       Radius 0.33
+      }
+      Tyre Tyre "{4D8B26DFFD85E58F}" {
+       LateralFriction 0.8
+       RollingResistance 0.014
+       Roughness 0
+       Tread 0.6
+       RollingDrag 0
+       LongitudinalFriction 1
+      }
+      TorqueShare 1
+      Steering Steering "{40106B55264680EA}" {
+       ScrubRadius 0.02
+       MechanicalTrail 0.03
+       SteeringDamping 1
+       PowerSteeringFactor 0.1
+       SteeringRatio 8
+      }
+     }
+    }
+    TyreModel Pacejka2002 "{6A3899DE8A4C94D0}" : "{D89960D619F12947}Configs/Vehicles/TireTune/M151A2_Tuned_Pacejka2002.conf" {
+    }
+   }
+  }
+ }
+}

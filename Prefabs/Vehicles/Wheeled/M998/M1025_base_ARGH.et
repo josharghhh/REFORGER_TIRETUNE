@@ -1,0 +1,307 @@
+Vehicle : "{0403FB7965F89864}Prefabs/Vehicles/Wheeled/M998/Humr_base.et" {
+ ID "BBCBA43A9778AE21"
+ components {
+  SCR_VehicleSoundComponent "{55C2E66AD4EF2CA6}" {
+   Filenames {
+    "{9DD9C6279F4489B4}Sounds/SupportStations/SupportStations_Vehicles.acp" "{1E4E57FCBAA4E206}Sounds/Vehicles/_SharedData/Vehicles_Wind_.acp" "{F41C3D53A2B69D85}Sounds/Vehicles/_SharedData/Destruction/Vehicles_Destruction_Fires.acp" "{BA8A5BD290F5FB34}Sounds/Vehicles/_SharedData/Destruction/Vehicles_Destruction.acp" "{D2DF25DD8B4A4B62}Sounds/Destruction/Multiphase/Destruction_Multiphase_Vehicle.acp" "{F1030E91E4B33E24}Sounds/Vehicles/_SharedData/WaterInteractions/Vehicles_WaterInteractions.acp" "{2E85F3093AF07F42}Sounds/Vehicles/Wheeled/M998/Vehicles_M998_Engine.acp" "{6A66DD8E4E47D02B}Sounds/Vehicles/Wheeled/M998/Vehicles_M998_Animations.acp" "{8E7050E89B0183BC}Sounds/Vehicles/Wheeled/M998/Vehicles_M998_Horn.acp" "{5D55FC056E1F7A62}Sounds/Vehicles/Wheeled/M998/Vehicles_M998_Rain_Armored.acp" "{465B31754AAAE693}Sounds/Vehicles/_SharedData/Crashes/Cars/Vehicles_Crashes_Cars.acp"
+   }
+  }
+  BaseLightManagerComponent "{51E210F17D2534F7}" {
+   EmissiveSurfaceSlots {
+    SCR_EmissiveLightSurfaceSlot LBreaklight {
+     ConfigurationsOverride {
+      SurfaceLightConfigItem "{6AC881499F41AAD1}" {
+      }
+      SurfaceLightConfigItem "{6AC881499F41AAB3}" {
+      }
+      SurfaceLightConfigItem "{6AC881499F41AAB2}" {
+       EmissiveMultiplier 4
+       EmissiveColorTint 1 0.366 0.004 1
+      }
+     }
+    }
+    SCR_EmissiveLightSurfaceSlot RBreaklight {
+     ConfigurationsOverride {
+      SurfaceLightConfigItem "{6AC881499F41AAB0}" {
+      }
+      SurfaceLightConfigItem "{6AC881499F41AAB7}" {
+      }
+      SurfaceLightConfigItem "{6AC881499F41AAB6}" {
+       EmissiveMultiplier 4
+       EmissiveColorTint 1 0.366 0.004 1
+      }
+     }
+    }
+   }
+  }
+  SCR_BaseCompartmentManagerComponent "{20FB66C5DCB8DF72}" {
+   DoorInfoList {
+    CompartmentDoorInfo "{60E47D679D55B7AD}" {
+     OpenDoorAction SCR_OpenVehicleDoorUserAction "{6AC881499F41AAAA}" {
+      ParentContextList {
+       "door_l01" "door_l01_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B690DC8BDF}" : "{6404F19156C91DC4}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Open.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 13
+     }
+     CloseDoorAction SCR_CloseVehicleDoorUserAction "{6AC881499F41AAA8}" {
+      ParentContextList {
+       "door_l01" "door_l01_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B6ED7BA712}" : "{9D90716578926759}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Close.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 11
+     }
+     FakeDoor 0
+    }
+    CompartmentDoorInfo "{60E47D679ED85916}" {
+     OpenDoorAction SCR_OpenVehicleDoorUserAction "{6AC881499F41AAAE}" {
+      ParentContextList {
+       "door_r01" "door_r01_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B69786CC78}" : "{6404F19156C91DC4}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Open.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 13
+     }
+     CloseDoorAction SCR_CloseVehicleDoorUserAction "{6AC881499F41AAAD}" {
+      ParentContextList {
+       "door_r01" "door_r01_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B6987AE32F}" : "{9D90716578926759}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Close.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 11
+     }
+     FakeDoor 0
+    }
+    CompartmentDoorInfo "{60F6E79865F74FD2}" {
+     OpenDoorAction SCR_OpenVehicleDoorUserAction "{6AC881499F41AAA3}" {
+      ParentContextList {
+       "door_l02" "door_l02_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B69F49DE4B}" : "{6404F19156C91DC4}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Open.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 13
+     }
+     CloseDoorAction SCR_CloseVehicleDoorUserAction "{6AC881499F41AAA2}" {
+      ParentContextList {
+       "door_l02" "door_l02_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B69ECFE5AF}" : "{9D90716578926759}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Close.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 11
+     }
+     FakeDoor 0
+    }
+    CompartmentDoorInfo "{60F6E79866CBE8F2}" {
+     OpenDoorAction SCR_OpenVehicleDoorUserAction "{6AC881499F41AAA1}" {
+      ParentContextList {
+       "door_r02" "door_r02_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B6854795C0}" : "{6404F19156C91DC4}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Open.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 13
+     }
+     CloseDoorAction SCR_CloseVehicleDoorUserAction "{6AC881499F41AA8F}" {
+      ParentContextList {
+       "door_r02" "door_r02_int"
+      }
+      UIInfo SCR_ActionUIInfo "{6168A3B688B31BA0}" : "{9D90716578926759}Prefabs/Vehicles/Core/Configs/Actions/ActionUIInfo/ActionUIInfo_Close.conf" {
+      }
+      VisibilityRange 1.8
+      "Sort Priority" 11
+     }
+     FakeDoor 0
+    }
+   }
+   CompartmentSlots {
+    PilotCompartmentSlot PilotCompartment {
+     CompartmentAction SCR_GetInUserAction "{5086DB209BDE8253}" {
+      ParentContextList + {
+       "door_l01"
+      }
+     }
+     CharactersCanFallOutOnFlip 0
+     BaseCoverage 0.3
+    }
+    CargoCompartmentSlot Passenger_r01 {
+     CompartmentAction SCR_GetInUserAction "{5086CC2FCCAA457D}" {
+      ParentContextList + {
+       "door_r01"
+      }
+     }
+     CharactersCanFallOutOnFlip 0
+     BaseCoverage 0.3
+    }
+    CargoCompartmentSlot Passenger_l02 {
+     CompartmentAction SCR_GetInUserAction "{5086CC2FCCAA457D}" {
+      ParentContextList + {
+       "door_l02"
+      }
+     }
+     CharactersCanFallOutOnFlip 0
+     BaseCoverage 0.3
+    }
+    CargoCompartmentSlot Passenger_r02 {
+     CompartmentAction SCR_GetInUserAction "{5086CC2FCCAA457D}" {
+      ParentContextList + {
+       "door_r02"
+      }
+     }
+     CharactersCanFallOutOnFlip 0
+     BaseCoverage 0.3
+    }
+   }
+  }
+  SCR_EditableVehicleComponent "{50DEB7C26B5EB312}" {
+   m_UIInfo SCR_EditableVehicleUIInfo "{5298E609432D192D}" {
+    Name "#AR-Vehicle_M1025_Name"
+    Icon "{943873C801ED95B8}UI/Textures/Editor/EditableEntities/Vehicles/EditableEntity_Vehicle_Offroad.edds"
+    m_Image "{5789F439300307EC}UI/Textures/EditorPreviews/Vehicles/Wheeled/M998/M1025.edds"
+    m_sFaction "US"
+    m_aAuthoredLabels + {
+     TRAIT_ARMOR
+    }
+    m_aAutoLabels +{
+    }
+    m_EntityBudgetCost {
+     SCR_EntityBudgetValue "{5EDC86E4AF8908B6}" {
+      m_Value 240
+     }
+     SCR_EntityBudgetValue "{6AC881499F41AB7A}" {
+      m_BudgetType RANK_CORPORAL
+      m_Value 2
+     }
+    }
+    m_aOccupantFillCompartmentTypes +{
+    }
+   }
+  }
+  SCR_FuelManagerComponent "{5622A70CD78A9E2C}" {
+   FuelNodes {
+    SCR_FuelNode "{5622A70CD4036C5A}" {
+     FuelCapPosition EntitySlotInfo "{566ADD1384E4785E}" {
+      Offset 1.09 0.994 -1.255
+      Angles -62.58 -90 0
+     }
+    }
+   }
+  }
+  SCR_UniversalInventoryStorageComponent "{5916C587FC993363}" {
+   Attributes SCR_ItemAttributeCollection "{5916C587FF082FC8}" {
+    CustomAttributes {
+     PreviewRenderAttributes "{5916C587E61024B6}" {
+      CameraDistanceToItem 4.5
+      CameraOffset -0.5 -1 0
+     }
+    }
+   }
+   MaxCumulativeVolume 200000
+   m_fMaxWeight 1000
+  }
+  SCR_WheeledDamageManagerComponent "{141326E9FD94FE40}" {
+   "Additional hit zones" {
+    SCR_FlammableHitZone Hull {
+     DamageReduction 2
+    }
+   }
+   m_fVehicleDestroyDamage 11041
+  }
+  SlotManagerComponent "{55BCE45E438E4CFF}" {
+   Slots {
+    RegisteringComponentSlotInfo Seats_rear {
+     Enabled 1
+     Prefab "{19AF0B8EC9B64327}Prefabs/Vehicles/Wheeled/M998/VehParts/M998_seats_rear.et"
+    }
+    RegisteringComponentSlotInfo Rollbar {
+     Enabled 0
+    }
+    RegisteringComponentSlotInfo Antenna_rear {
+     Prefab ""
+    }
+    RegisteringComponentSlotInfo Tailgate {
+     Enabled 1
+     Prefab "{DB254D53094A048F}Prefabs/Vehicles/Wheeled/M998/VehParts/M998_tailgate.et"
+    }
+    RegisteringComponentSlotInfo SupplyStorage_01 {
+     Offset 0.3225 0.1826 -1.6085
+     Prefab "{11E588E215EBCF23}Prefabs/Props/Military/SupplyBox/SupplyCrate/SupplyCrate_01/SupplyCrate_01_Vehicle.et"
+    }
+    RegisteringComponentSlotInfo SupplyStorage_02 {
+     Prefab "{11E588E215EBCF23}Prefabs/Props/Military/SupplyBox/SupplyCrate/SupplyCrate_01/SupplyCrate_01_Vehicle.et"
+    }
+    RegisteringComponentSlotInfo SupplyStorage_03 {
+     Prefab "{11E588E215EBCF23}Prefabs/Props/Military/SupplyBox/SupplyCrate/SupplyCrate_01/SupplyCrate_01_Vehicle.et"
+    }
+    RegisteringComponentSlotInfo Roof {
+     MergePhysics 1
+     Prefab "{343EC0126CCD0F58}Prefabs/Vehicles/Wheeled/M998/VehParts/M1025_roof.et"
+     InheritParentSkeleton 1
+     RegisterDamage 1
+    }
+    EntitySlotInfo SupplyStorage_04 {
+     PivotID "v_body"
+     Offset -0.3127 0.1827 -1.6364
+     Angles 0 -90 0
+     MergePhysics 1
+     Enabled 0
+     Prefab "{11E588E215EBCF23}Prefabs/Props/Military/SupplyBox/SupplyCrate/SupplyCrate_01/SupplyCrate_01_Vehicle.et"
+    }
+    EntitySlotInfo SupplyStorage_06 {
+     PivotID "v_body"
+     Offset -0.0133 0.5104 -1.5139
+     Angles 0 -7.2727 0
+     MergePhysics 1
+     Enabled 0
+     Prefab "{11E588E215EBCF23}Prefabs/Props/Military/SupplyBox/SupplyCrate/SupplyCrate_01/SupplyCrate_01_Vehicle.et"
+    }
+   }
+  }
+  ActionsManagerComponent "{C97BE5489221AE18}" {
+   ActionContexts {
+    UserActionContext "{51B0DCCEEE98E970}" {
+     Position PointInfo "{51B0DCCEEE98D918}" {
+      Offset 0 0.05 0.3333
+     }
+    }
+    UserActionContext "{51B0DCCEEE985B10}" {
+     Position PointInfo "{51B0DCCEEE980C6F}" {
+      Offset 0 0.05 0.3108
+     }
+    }
+    UserActionContext "{51B0DCCEEE9F88AD}" {
+     Position PointInfo "{51B0DCCEEE9F7D7F}" {
+      Offset 0 0.05 0.3333
+     }
+    }
+    UserActionContext "{51B0DCCEEE9EF8F1}" {
+     Position PointInfo "{51B0DCCEEE9EAD7D}" {
+      Offset 0 0.05 0.3108
+     }
+    }
+   }
+   additionalActions {
+    SCR_OpenVehicleStorageAction "{5916C587945AD3E6}" {
+     ParentContextList +{
+     }
+    }
+   }
+  }
+  VehicleAnimationComponent "{50B803EAA459B0AF}" {
+   AnimGraph "{9C6D20FA5F9F5671}Assets/Vehicles/Wheeled/M998/workspaces/M998_door_roof.agr"
+   AnimInstance "{10FBFE423C20382E}Assets/Vehicles/Wheeled/M998/workspaces/M998_door_roof_vehicle.asi"
+   AnimInjection AnimationAttachmentInfo "{50B803EA8AD25BC8}" {
+    AnimGraph "{9C6D20FA5F9F5671}Assets/Vehicles/Wheeled/M998/workspaces/M998_door_roof.agr"
+    AnimInstance "{284EE65F9D48A7E4}Assets/Vehicles/Wheeled/M998/workspaces/M998_door_roof_player.asi"
+   }
+  }
+ }
+ coords 0 0 0
+}
